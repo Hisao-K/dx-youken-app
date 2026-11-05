@@ -496,14 +496,36 @@
     ]);
   }
 
+  /**
+   * 材料を入れる画面。種類（要件の文章・録音・アンケートの結果）を選び、入れ方が2つ以上ある種類は入れ方も選ぶ。
+   * 選んだものに要る欄だけを出す（2026-11-05 久夫さん指示）。
+   */
+  var HOWS = {
+    text: [['type', '文を打つ・貼る'], ['file', 'ファイルを選ぶ']],
+    audio: [['file', '録音のファイル']],
+    survey: [['file', 'ファイル'], ['drive', 'Google フォーム'], ['type', '文を貼る']],
+  };
+  var KIND_TEXT = {
+    text: { name: '例：相談の原文／打ち合わせのメモ', date: '日付（受け取った日）' },
+    audio: { name: '例：ヒアリング①', date: '日付（打ち合わせの日）' },
+    survey: { name: '例：事前アンケート', date: '日付（回答の日）' },
+  };
+
   function addMaterialForm() {
-    var kind = 'text';
+    var kind = 'text', how = 'type';
     var file = null, durationSec = 0;
     var kinds = el('div', { class: 'kinds' }, ['text', 'audio', 'survey'].map(function (k) {
-      return el('label', {}, [el('input', { type: 'radio', name: 'm-kind', value: k, checked: k === kind, onchange: function () { kind = k; refresh(); } }), KIND_LABEL[k]]);
+      return el('label', {}, [el('input', { type: 'radio', name: 'm-kind', value: k, checked: k === kind, onchange: function () {
+        kind = k; how = HOWS[k][0][0]; clearFile(); refresh();
+      } }), KIND_LABEL[k]]);
     }));
-    var name = el('input', { maxlength: '100', placeholder: '例：ヒアリング①／事前アンケート' });
+    var hows = el('div', { class: 'kinds' });
+    var howBox = el('div', {}, [el('div', { class: 'field', text: '入れ方' }), hows]);
+    var name = el('input', { maxlength: '100' });
+    var nameLabel = el('label', { class: 'field' }, ['名前', name]);
     var date = el('input', { type: 'date', value: ymd(new Date()) });
+    var dateText = el('span', {});
+    var dateLabel = el('label', { class: 'field' }, [dateText, date]);
     var textArea = el('textarea', { id: 'm-text', rows: '6', placeholder: '打つ・声で入れる・貼り付ける' });
     var fileInput = el('input', { type: 'file', hidden: true });
     var fileInfo = el('div', { class: 'sub' });
@@ -516,28 +538,47 @@
       el('label', { class: 'field' }, ['参加者（任意。話した人の名前を当てやすくなる）', attendees]),
       el('label', { class: 'field' }, ['用語（任意。固有名詞・専門用語の書き方）', glossary]),
     ]);
+    var textLabel = el('span', {});
     var textBox = el('div', {}, [
-      el('label', { class: 'field' }, ['文を入れる', textArea]),
+      el('label', { class: 'field' }, [textLabel, textArea]),
       el('div', { class: 'row' }, [
         el('button', { type: 'button', class: 'small proof', 'data-target': 'm-text', text: '誤変換を確かめる' }),
-        el('button', { type: 'button', class: 'primary', text: 'この文を入れる', onclick: addText }),
       ]),
+      el('button', { type: 'button', class: 'primary wide', text: 'この文を入れる', onclick: addText }),
     ]);
-    var surveyBox = el('div', {}, [
-      el('label', { class: 'field' }, ['Google フォームの回答などドライブのファイルなら、URL を貼る', driveUrl]),
-      el('div', { class: 'row' }, [el('button', { type: 'button', text: 'ドライブのファイルを入れる', onclick: addDrive })]),
+    var driveBox = el('div', {}, [
+      el('label', { class: 'field' }, ['Google フォームの回答のスプレッドシートの URL', driveUrl]),
+      el('p', { class: 'sub', text: 'kamozaki0413@kamobase.com で開けるファイルにしてください。' }),
+      el('button', { type: 'button', class: 'primary wide', text: 'このファイルを入れる', onclick: addDrive }),
     ]);
-    var pick = el('button', { type: 'button', text: 'ファイルを選ぶ', onclick: function () { if (!state.uploading) { fileInput.value = ''; fileInput.click(); } } });
-    var send = el('button', { type: 'button', class: 'primary', text: 'ファイルを送る', disabled: true, onclick: sendFile });
+    var pick = el('button', { type: 'button', class: 'wide', text: 'ファイルを選ぶ', onclick: function () { if (!state.uploading) { fileInput.value = ''; fileInput.click(); } } });
+    var send = el('button', { type: 'button', class: 'primary wide', text: 'ファイルを送る', disabled: true, onclick: sendFile });
+    var fileNote = el('p', { class: 'sub' });
+    var fileBox = el('div', {}, [fileNote, pick, fileInput, fileInfo, progress, send]);
     var out = el('p', { class: 'msg' });
 
+    function clearFile() { file = null; durationSec = 0; fileInput.value = ''; fileInfo.textContent = ''; }
+
     function refresh() {
+      // 入れ方の選択（2つ以上あるときだけ出す）
+      hows.replaceChildren.apply(hows, HOWS[kind].map(function (h) {
+        return el('label', {}, [el('input', { type: 'radio', name: 'm-how', value: h[0], checked: h[0] === how, onchange: function () { how = h[0]; clearFile(); refresh(); } }), h[1]]);
+      }));
+      howBox.hidden = HOWS[kind].length < 2;
+      name.placeholder = KIND_TEXT[kind].name;
+      dateText.textContent = KIND_TEXT[kind].date;
       audioBox.hidden = kind !== 'audio';
-      textBox.hidden = kind === 'audio';
-      surveyBox.hidden = kind !== 'survey';
+      textBox.hidden = how !== 'type';
+      driveBox.hidden = how !== 'drive';
+      fileBox.hidden = how !== 'file';
+      textLabel.textContent = kind === 'survey' ? 'アンケートの回答（メールなどの文を貼る）' : '要件の文章（打つ・声で入れる・貼る）';
       fileInput.accept = kind === 'audio' ? 'audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm,.flac'
-        : '.docx,.doc,.xlsx,.xls,.pptx,.ppt,.pdf,.txt,.md,.csv,.tsv,.html,.htm,image/*';
-      pick.textContent = kind === 'audio' ? '録音のファイルを選ぶ' : 'ファイルを選ぶ（Word・Excel・PowerPoint・PDF・写真など）';
+        : kind === 'survey' ? '.docx,.doc,.xlsx,.xls,.pdf,.csv,image/*'
+        : '.docx,.doc,.xlsx,.xls,.pptx,.ppt,.pdf,.txt,.md,.csv,.tsv,.html,.htm';
+      pick.textContent = kind === 'audio' ? '録音のファイルを選ぶ' : 'ファイルを選ぶ';
+      fileNote.textContent = kind === 'audio' ? 'スマホの録音アプリで録ったファイル（m4a・mp3 など）を選びます。iPhone のボイスメモは、先に「"ファイル"に保存」してから選びます。'
+        : kind === 'survey' ? 'Word・Excel・PDF・csv・紙のアンケートの写真。書き出した質問票に書き込んでもらった Word なら、回答欄に自動で入ります。'
+        : 'Word・Excel・PowerPoint・PDF・txt・md・csv・html。中の文字を取り出して入れます。';
       send.disabled = state.uploading || !file;
     }
 
@@ -603,11 +644,8 @@
     }
 
     var form = el('div', { class: 'panel' }, [
-      el('h3', { text: '材料を入れる' }), kinds,
-      el('label', { class: 'field' }, ['名前', name]),
-      el('label', { class: 'field' }, ['日付（打ち合わせ・回答の日）', date]),
-      audioBox, textBox, surveyBox,
-      el('div', { class: 'row' }, [pick, fileInput]), fileInfo, progress, send, out,
+      el('h3', { text: '材料を入れる' }), kinds, howBox, nameLabel, dateLabel,
+      audioBox, textBox, driveBox, fileBox, out,
     ]);
     refresh();
     return form;
