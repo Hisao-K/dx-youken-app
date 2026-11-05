@@ -1332,7 +1332,8 @@
       var body = rows.slice(1).filter(function (l) { return !/^\s*\|?\s*:?-{2,}/.test(l); });
       var table = el('table', { class: 'strat' }, [el('tr', {}, head.map(function (h) { return el('th', { text: h }); }))]);
       body.forEach(function (l) {
-        table.appendChild(el('tr', {}, cells(l).map(function (v, i) { return el('td', { text: v, 'data-label': head[i] || '' }); })));
+        // セルの中の <br> は改行として見せる（対策概要の「対策例」と「Todo」を分けるため）
+        table.appendChild(el('tr', {}, cells(l).map(function (v, i) { return el('td', { text: v.replace(/<br\s*\/?>/gi, '\n'), 'data-label': head[i] || '' }); })));
       });
       out.push(table);
       rows = [];

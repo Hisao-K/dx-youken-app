@@ -151,7 +151,7 @@ table.hearing tr.grp th { border-left: 4px solid var(--orange); }
 .card.rest > .policydoc { margin-top: 8px; }
 .mdview { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 table.strat { width: 100%; border-collapse: collapse; font-size: 15px; }
-table.strat th, table.strat td { border: 1px solid var(--line); padding: 6px 8px; vertical-align: top; text-align: left; overflow-wrap: anywhere; }
+table.strat th, table.strat td { border: 1px solid var(--line); padding: 6px 8px; vertical-align: top; text-align: left; overflow-wrap: anywhere; white-space: pre-line; }
 table.strat th { background: var(--panel); white-space: nowrap; }
 @media (max-width: 600px) {
   table.strat, table.strat tbody, table.strat tr, table.strat td { display: block; width: 100%; }
