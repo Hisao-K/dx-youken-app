@@ -211,3 +211,5 @@ table.strat th { background: var(--panel); white-space: nowrap; }
 .rec .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .rec .row button { flex: 1; }
 .formurl { word-break: break-all; }
+.row .copynote { margin: 0; min-height: 0; }
+.copybox { width: 100%; font-size: 15px; padding: 6px; }

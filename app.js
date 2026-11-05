@@ -1163,6 +1163,29 @@
     }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
   }
 
+  /**
+   * 文字をクリップボードに写す。写せたら true。
+   * navigator.clipboard を断るブラウザ（アプリの中のブラウザなど）があるので、断られたら選んでコピーする昔のやり方も試す
+   */
+  function copyText(text) {
+    var legacy = function () {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0'; ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      return ok;
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return legacy(); });
+    }
+    return Promise.resolve(legacy());
+  }
+
   /** 作ったフォーム：お客様に送る URL・編集・回答の取り込み */
   function surveyFormPanel(c) {
     var f = c.surveyForm;
@@ -1172,11 +1195,26 @@
       url ? el('div', { class: 'row' }, [
         el('span', { text: 'お客様に送る URL：' }),
         el('a', { class: 'formurl', href: url, target: '_blank', rel: 'noopener', text: url }),
-        el('button', { class: 'small', text: 'URL をコピー', onclick: function () {
-          var done = function () { msg('case-msg', 'URL をコピーしました', 'ok'); };
-          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function () { prompt('この URL をコピーしてください', url); });
-          else prompt('この URL をコピーしてください', url);
+        el('button', { class: 'small', text: 'URL をコピー', onclick: function (ev) {
+          // 結果はボタンのすぐ横に出す（上のお知らせ欄はスクロールの外で見えないため。2026-11-05）
+          var btn = ev.currentTarget, note = btn.parentNode.querySelector('.copynote'), box = btn.parentNode.querySelector('.copybox');
+          copyText(url).then(function (ok) {
+            if (ok) {
+              note.textContent = 'コピーしました';
+              note.className = 'copynote msg ok';
+              box.hidden = true;
+              return;
+            }
+            // コピーを断られたとき：URL を選んだ状態の欄を出す（長押し・右クリックでコピーできる）
+            note.textContent = 'コピーできませんでした。下の欄の URL を長押し（PC は右クリック）してコピーしてください';
+            note.className = 'copynote msg err';
+            box.hidden = false;
+            box.focus();
+            box.select();
+          });
         } }),
+        el('span', { class: 'copynote msg' }),
+        el('input', { class: 'copybox', type: 'text', readonly: 'readonly', value: url, hidden: 'hidden', onclick: function (ev) { ev.currentTarget.select(); } }),
       ]) : null,
       el('div', { class: 'row' }, [
         safeLink(f.editUrl) ? el('a', { href: f.editUrl, target: '_blank', rel: 'noopener', text: 'フォームを開く（編集・回答の確認）' }) : null,
