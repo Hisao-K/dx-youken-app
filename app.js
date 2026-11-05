@@ -849,7 +849,7 @@
 
   /** ヒアリング項目の表（区分ごと。問い・回答・【要確認】・出どころ） */
   function hearingTable(items) {
-    var groups = (state.cfg && state.cfg.groups) || [];
+    var groups = (state.c && state.c.groups) || (state.cfg && state.cfg.groups) || [];
     var table = el('table', { class: 'hearing', id: 'hearing' });
     table.appendChild(el('tr', {}, [el('th', { text: '#' }), el('th', { text: '押さえる項目' }), el('th', { text: '回答' })]));
     function row(it) {
