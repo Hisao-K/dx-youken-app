@@ -70,7 +70,7 @@
   function hm(s) { return String(s || '').replace('T', ' ').slice(5, 16); }
   function errText(x) { return (x && (x.message || String(x))) || '失敗しました。'; }
   /** GAS が返すリンクのうち、Google ドライブ・ドキュメントのものだけを使う */
-  function safeLink(url) { return /^https:\/\/(docs|drive)\.google\.com\//.test(String(url || '')) ? url : ''; }
+  function safeLink(url) { return /^https:\/\/((docs|drive)\.google\.com|forms\.gle)\//.test(String(url || '')) ? url : ''; }
 
   function blobToBase64(blob) {
     return new Promise(function (resolve, reject) {
@@ -401,6 +401,7 @@
         safeLink(c.links.folder) ? el('a', { href: c.links.folder, target: '_blank', rel: 'noopener', text: '案件フォルダ' }) : null,
         safeLink(c.links.md) ? el('a', { href: c.links.md, target: '_blank', rel: 'noopener', text: '分析の md' }) : null,
         safeLink(c.links.questionnaire) ? el('a', { href: c.links.questionnaire, target: '_blank', rel: 'noopener', text: '質問票（Word）' }) : null,
+        c.surveyForm && safeLink(c.surveyForm.editUrl) ? el('a', { href: c.surveyForm.editUrl, target: '_blank', rel: 'noopener', text: '質問票（フォーム）' }) : null,
         el('button', { class: 'link', text: '読み直す', onclick: function () {
           if (state.dirty && !confirm('保存していない直しがあります。消えますが、読み直しますか？')) return;
           state.dirty = false; refreshCase(false);
@@ -1141,6 +1142,54 @@
     return out;
   }
 
+  /**
+   * 追加の質問票を Google フォームにする（2026-11-05 久夫さん指示）。前のフォームに回答がまだなければ同じフォームを作り直す（URL は同じ）。
+   * 回答があるときは、確かめてから新しいフォームを作る（前のフォームと回答は残る）
+   */
+  function makeSurveyForm(c, renew) {
+    busy('フォームを作っています…');
+    api('questionnaireForm', { caseId: c.id, renew: !!renew }).then(function (r) {
+      idle();
+      if (r.ok) {
+        after(r, (r.isNew ? 'フォームを作りました。' : '今のフォームの問いを作り直しました（お客様に送る URL は前と同じです）。') +
+          '下の「お客様に送る URL」をお送りください。' + (r.warn ? '\n' + r.warn : ''));
+        return;
+      }
+      if (r.code === 'E007') {
+        if (confirm('今のフォームには、もう回答が' + r.count + '件あります。\n\n新しいフォームを作りますか？（今のフォームと回答は残ります。お客様には新しい URL を送り直してください）')) makeSurveyForm(c, true);
+        return;
+      }
+      msg('case-msg', errText(r), 'err');
+    }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
+  }
+
+  /** 作ったフォーム：お客様に送る URL・編集・回答の取り込み */
+  function surveyFormPanel(c) {
+    var f = c.surveyForm;
+    var url = safeLink(f.url);
+    return el('div', { class: 'card' }, [
+      el('div', { class: 'sub', text: '質問票のフォーム（' + f.count + '問・' + hm(f.time) + '）' }),
+      url ? el('div', { class: 'row' }, [
+        el('span', { text: 'お客様に送る URL：' }),
+        el('a', { class: 'formurl', href: url, target: '_blank', rel: 'noopener', text: url }),
+        el('button', { class: 'small', text: 'URL をコピー', onclick: function () {
+          var done = function () { msg('case-msg', 'URL をコピーしました', 'ok'); };
+          if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, function () { prompt('この URL をコピーしてください', url); });
+          else prompt('この URL をコピーしてください', url);
+        } }),
+      ]) : null,
+      el('div', { class: 'row' }, [
+        safeLink(f.editUrl) ? el('a', { href: f.editUrl, target: '_blank', rel: 'noopener', text: 'フォームを開く（編集・回答の確認）' }) : null,
+        el('button', { class: 'small primary', text: 'フォームの回答を取り込む', onclick: function () {
+          if (state.dirty) { alert('先に「手で直した内容を保存」を押してください'); return; }
+          // 今までの「フォームの URL を貼る」と同じ処理。追加の質問票の回答として、この案件の材料に入れる（回答が入っている欄は上書きしない）
+          call('addDriveFile', { caseId: c.id, kind: 'survey', step: 's3', name: '追加の質問票の回答（フォーム）', url: f.id }, '取り込みを始めています…', 'case-msg')
+            .then(function (r) { after(r, '取り込みを始めました。読み終えると、問いの文が同じ回答欄に入ります（回答が入っている欄は上書きしません）'); });
+        } }),
+      ]),
+    ]);
+  }
+
   function renderStep(step) {
     var c = state.c;
     var s = c.steps[step];
@@ -1176,8 +1225,13 @@
             if (state.dirty) { alert('先に「手で直した内容を保存」を押してください（質問票は保存した問いから作ります）'); return; }
             call('questionnaire', { caseId: c.id }, '書き出しています…', 'case-msg').then(function (r) { after(r, '書き出しました。案件の上の「質問票（Word）」から開けます'); });
           } }),
+          el('button', { text: 'Googleフォームに追加', onclick: function () {
+            if (state.dirty) { alert('先に「手で直した内容を保存」を押してください（フォームは保存した問いから作ります）'); return; }
+            makeSurveyForm(c, false);
+          } }),
           s.lastFill ? el('span', { class: 'sub', text: '材料から回答欄を埋めた：' + s.lastFill.filled + '問（' + hm(s.lastFill.time) + '）' }) : null,
         ]));
+        if (c.surveyForm) parts.push(surveyFormPanel(c));
       }
       if (step === 's5' && s.check) parts.push(el('h3', { text: '渡す前の点検' }), el('div', { class: 'readonly', text: s.check }));
       if (s.next) parts.push(el('h3', { text: '次に聞くこと' }), el('div', { class: 'readonly', text: s.next }));

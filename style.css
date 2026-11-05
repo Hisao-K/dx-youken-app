@@ -210,3 +210,4 @@ table.strat th { background: var(--panel); white-space: nowrap; }
 .rec-play { width: 100%; }
 .rec .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .rec .row button { flex: 1; }
+.formurl { word-break: break-all; }
