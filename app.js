@@ -12,7 +12,7 @@
   var POLL_MS = 10000;
   var CHUNK_TRIES = 5;
   var KIND_LABEL = { text: '要件の文章', audio: '録音', survey: 'アンケートの結果' };
-  var STEP_TAB = { s3: '方針0〜2・ヒアリング', s4: '方針3〜5', s5: '分析' };
+  var STEP_TAB = { s3: '目的・課題・ヒアリング', s4: '対策', s5: '分析' };  // 2026-11-05 タブ名を「目的・課題」「対策」に（久夫さん指示）
 
   var state = {
     apiUrl: '', idToken: '', session: 0, tokenWaiters: [],
@@ -411,7 +411,7 @@
     ]);
     document.querySelectorAll('.tabs button').forEach(function (b) {
       var t = b.dataset.tab;
-      var label = { reg: '会社・要件', s3: '方針0〜2', s4: '方針3〜5', s5: '分析' }[t];
+      var label = { reg: '会社・要件', s3: '目的・課題', s4: '対策', s5: '分析' }[t];
       var s = c.steps[t];
       if (s) label += s.deskPending ? ' 🕐' : s.review === 'needed' && s.content ? ' ●' : s.ok ? ' ✓' : '';
       if (s && s.stale) label += '！';
@@ -499,7 +499,7 @@
   }
 
   /** 材料を入れるタブの名前（材料の一覧に「どこで入れたか」を出す） */
-  function matPlace(m) { return m.step === 's3' ? '方針0〜2で入れた' : m.step === 's4' ? '方針3〜5で入れた' : ''; }
+  function matPlace(m) { return m.step === 's3' ? '目的・課題で入れた' : m.step === 's4' ? '対策で入れた' : ''; }
 
   /**
    * 材料を入れる画面。種類（要件の文章・録音・アンケートの結果）を選び、入れ方が2つ以上ある種類は入れ方も選ぶ。
@@ -534,7 +534,7 @@
   function kindLabel(m) { return (STEP_KINDS[m.step] && STEP_KIND_LABEL[m.kind]) || KIND_LABEL[m.kind] || m.kind; }
 
   /** 材料を入れるタブの名前 */
-  function placeName(step) { return step === 's3' ? '方針0〜2' : step === 's4' ? '方針3〜5' : '会社・要件'; }
+  function placeName(step) { return step === 's3' ? '目的・課題' : step === 's4' ? '対策' : '会社・要件'; }
 
   // =========================
   //  このアプリで録音する（2026-11-05 久夫さん指示。会社・要件／方針0〜2／方針3〜5のどのタブでも同じ仕組み）
@@ -1071,7 +1071,7 @@
         ]),
       ]),
       el('h3', { text: '要件（材料）' }),
-      el('p', { class: 'sub', text: '方針を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。打ち合わせの録音は、方針0〜2・方針3〜5のタブからも入れられます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
+      el('p', { class: 'sub', text: '目的・課題と対策を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。打ち合わせの録音は、目的・課題・対策のタブからも入れられます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
       allMats.length ? materialList(allMats) : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
       addMaterialForm({ kind: 'text' }),
       el('h3', { text: word + '情報' }),
@@ -1154,9 +1154,10 @@
 
     var content = null, hearing = null;
     if (s.content) {
-      content = step === 's3' ? policyDoc(s.content)
+      content = step === 's3' ? policyDoc(s.content) : step === 's4' ? strategyDoc(s.content)
         : el('textarea', { id: 'step-content', class: 'doc', value: s.content, oninput: function () { state.dirty = true; } });
-      parts.push(el('h3', { text: step === 's5' ? '分析' : step === 's3' ? '方針0〜2' : '方針（0〜5・付）' }), content);
+      if (step !== 's4') parts.push(el('h3', { text: step === 's5' ? '分析' : '目的・課題' }));
+      parts.push(content);
       if (step === 's3') {
         parts.push(el('h3', { text: 'ヒアリング項目と回答' }));
         hearing = hearingTable(s.items || []);
@@ -1208,53 +1209,148 @@
    * 次の「## 」「### 」の見出しの前までをボタンで開く（2026-11-05 久夫さん指示：画面を開いたときは、簡潔にまとめた要件・ポイントだけを出す）。
    * 保存するときは、分けた欄を元の順につなぎ直す（policyText）。
    */
-  function splitPolicy(text) {
+  /** byChapter＝「## 」の見出しごとにも欄を分ける（対策のタブで、節をカードに分けるため） */
+  function splitPolicy(text, byChapter) {
     var segs = [], cur = null;
     String(text || '').split('\n').forEach(function (line) {
       var isHosoku = /^###\s/.test(line);
       var isHead = /^#{2,3}\s/.test(line);
       if (isHosoku) { cur = { kind: 'hosoku', head: line, lines: [] }; segs.push(cur); return; }
-      if (!cur || (cur.kind === 'hosoku' && isHead)) { cur = { kind: 'main', lines: [] }; segs.push(cur); }
+      if (!cur || (cur.kind === 'hosoku' && isHead) || (byChapter && /^##\s/.test(line) && cur.lines.length)) { cur = { kind: 'main', lines: [] }; segs.push(cur); }
       cur.lines.push(line);
     });
+    segs.forEach(function (seg, i) { seg.ord = i; });
     return segs;
+  }
+
+  /** 欄を1つ作る。main＝見出しと要点（そのまま見せる）、hosoku＝「### 」の小節（ボタンで開く） */
+  function segPart(seg, title) {
+    var area = el('textarea', { class: 'doc part', value: seg.lines.join('\n'), oninput: function () { state.dirty = true; } });
+    area.dataset.kind = seg.kind;
+    area.dataset.ord = String(seg.ord);
+    if (seg.kind === 'main') return area;
+    area.dataset.head = seg.head;
+    var key = seg.ord + ':' + title;
+    var open = !!state.hosokuOpen[key];
+    area.hidden = !open;
+    var name = seg.head.replace(/^###\s*/, '');
+    var label = function () { return /^補足$/.test(name) ? (open ? '補足を閉じる' : '補足を表示') + (title ? '（' + title + '）' : '') : (open ? '▾ ' : '▸ ') + name; };
+    var btn = el('button', { type: 'button', class: 'small hosoku-btn', text: label() });
+    btn.addEventListener('click', function () {
+      open = !open;
+      state.hosokuOpen[key] = open;
+      area.hidden = !open;
+      btn.textContent = label();
+      if (open) autosize(area);
+    });
+    return el('div', { class: 'hosoku' }, [btn, area]);
+  }
+
+  function chapterTitle(seg) {
+    var h = seg.lines.filter(function (l) { return /^##\s/.test(l); })[0];
+    return h ? h.replace(/^##\s*/, '') : '';
   }
 
   function policyDoc(text) {
     var box = el('div', { id: 'step-doc', class: 'policydoc' });
     var title = '';
-    splitPolicy(text).forEach(function (seg, i) {
-      var area = el('textarea', { class: 'doc part', value: seg.lines.join('\n'), oninput: function () { state.dirty = true; } });
-      area.dataset.kind = seg.kind;
-      if (seg.kind === 'main') {
-        var h = seg.lines.filter(function (l) { return /^##\s/.test(l); })[0];
-        if (h) title = h.replace(/^##\s*/, '');
-        box.appendChild(area);
-        return;
-      }
-      area.dataset.head = seg.head;
-      var key = i + ':' + title;
-      var open = !!state.hosokuOpen[key];
-      area.hidden = !open;
-      var name = seg.head.replace(/^###\s*/, '');
-      var label = function () { return /^補足$/.test(name) ? (open ? '補足を閉じる' : '補足を表示') + (title ? '（' + title + '）' : '') : (open ? '▾ ' : '▸ ') + name; };
-      var btn = el('button', { type: 'button', class: 'small hosoku-btn', text: label() });
-      btn.addEventListener('click', function () {
-        open = !open;
-        state.hosokuOpen[key] = open;
-        area.hidden = !open;
-        btn.textContent = label();
-        if (open) autosize(area);
-      });
-      box.appendChild(el('div', { class: 'hosoku' }, [btn, area]));
+    splitPolicy(text).forEach(function (seg) {
+      if (seg.kind === 'main' && chapterTitle(seg)) title = chapterTitle(seg);
+      box.appendChild(segPart(seg, title));
     });
     return box;
   }
 
-  /** 分けた欄を元の本文につなぎ直す */
+  /**
+   * 対策のタブ（2026-11-05 久夫さん指示）。方針3を「真の課題」のカードとして最初に出し、次に方針4を「対策」のカード
+   * （課題ごとの対策の表）、方針5と付をカードで出す。方針0〜2（ヒアリングの回答を反映した版）は最後にたたんで出す。
+   * 欄の並びは本文の順と違うので、保存のときは data-ord（本文の中の順）でつなぎ直す（policyText）。
+   */
+  var STRATEGY_CARDS = [
+    { no: '3', title: '真の課題' },
+    { no: '4', title: '対策' },
+    { no: '5', title: '体制' },
+    { no: '付', title: '初回面談で確かめること' },
+  ];
+  function strategyDoc(text) {
+    var box = el('div', { id: 'step-doc', class: 'policydoc strategy' });
+    var chapters = [], cur = null;
+    splitPolicy(text, true).forEach(function (seg) {
+      var t = seg.kind === 'main' ? chapterTitle(seg) : '';
+      if (t || !cur) { cur = { no: (t.match(/^(\d+|付)\s*[.．]/) || [])[1] || '', title: t, segs: [] }; chapters.push(cur); }
+      cur.segs.push(seg);
+    });
+    var used = {};
+    STRATEGY_CARDS.forEach(function (card) {
+      chapters.forEach(function (ch, i) {
+        if (ch.no !== card.no || used[i]) return;
+        used[i] = true;
+        var body = el('div', { class: 'card' }, [el('h3', { class: 'card-title', text: card.title })]);
+        ch.segs.forEach(function (seg) {
+          body.appendChild(seg.kind === 'main' && card.no === '4' ? tablePart(seg) : segPart(seg, ch.title));
+        });
+        box.appendChild(body);
+      });
+    });
+    // 方針0〜2の写しと、型に合わない節は最後にたたむ（消さない。保存のときはそのまま残る）
+    var rest = chapters.filter(function (ch, i) { return !used[i]; });
+    if (rest.length) {
+      var inner = el('div', { class: 'policydoc' });
+      rest.forEach(function (ch) { ch.segs.forEach(function (seg) { inner.appendChild(segPart(seg, ch.title)); }); });
+      var det = el('details', { class: 'card rest' }, [el('summary', { text: '目的・課題（ヒアリングの回答を反映した版）' }), inner]);
+      det.addEventListener('toggle', function () { if (det.open) inner.querySelectorAll('textarea').forEach(function (t) { if (!t.hidden) autosize(t); }); });
+      box.appendChild(det);
+    }
+    return box;
+  }
+
+  /** 対策の節の要点：表は表で見せ、「手で直す」で元の文章の欄を開く */
+  function tablePart(seg) {
+    var area = segPart(seg, '');
+    var view = el('div', { class: 'mdview' });
+    var draw = function () { view.replaceChildren.apply(view, mdBlocks(area.value)); };
+    draw();
+    area.hidden = true;
+    area.addEventListener('input', draw);
+    var btn = el('button', { type: 'button', class: 'small hosoku-btn', text: '表と文章を手で直す' });
+    btn.addEventListener('click', function () {
+      area.hidden = !area.hidden;
+      btn.textContent = area.hidden ? '表と文章を手で直す' : '手で直す欄を閉じる';
+      if (!area.hidden) autosize(area);
+    });
+    return el('div', { class: 'hosoku' }, [view, btn, area]);
+  }
+
+  /** 文章を、表（「|」で始まる行）とそれ以外に分けて見せる。「## 」の見出しの行は出さない（カードの見出しで足りる） */
+  function mdBlocks(text) {
+    var out = [], buf = [], rows = [];
+    var cells = function (l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (x) { return x.trim().replace(/\*\*/g, ''); }); };
+    var flushText = function () { var t = buf.join('\n').trim(); if (t) out.push(el('div', { class: 'readonly', text: t })); buf = []; };
+    var flushTable = function () {
+      if (!rows.length) return;
+      var head = cells(rows[0]);
+      var body = rows.slice(1).filter(function (l) { return !/^\s*\|?\s*:?-{2,}/.test(l); });
+      var table = el('table', { class: 'strat' }, [el('tr', {}, head.map(function (h) { return el('th', { text: h }); }))]);
+      body.forEach(function (l) {
+        table.appendChild(el('tr', {}, cells(l).map(function (v, i) { return el('td', { text: v, 'data-label': head[i] || '' }); })));
+      });
+      out.push(table);
+      rows = [];
+    };
+    String(text || '').split('\n').forEach(function (l) {
+      if (/^##\s/.test(l)) return;
+      if (/^\s*\|/.test(l)) { flushText(); rows.push(l); } else { flushTable(); buf.push(l); }
+    });
+    flushTable(); flushText();
+    return out;
+  }
+
+  /** 分けた欄を元の本文につなぎ直す（欄の並びが本文の順と違うときも、data-ord の順に戻す） */
   function policyText() {
     var out = [];
-    document.querySelectorAll('#step-doc textarea.part').forEach(function (t) {
+    var areas = Array.prototype.slice.call(document.querySelectorAll('#step-doc textarea.part'));
+    areas.sort(function (a, b) { return Number(a.dataset.ord) - Number(b.dataset.ord); });
+    areas.forEach(function (t) {
       if (t.dataset.kind === 'hosoku') out.push(t.dataset.head);
       if (t.value !== '' || t.dataset.kind === 'main') out = out.concat(t.value.split('\n'));
     });
