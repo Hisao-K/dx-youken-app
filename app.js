@@ -465,7 +465,7 @@
       return el('div', { class: 'mat' }, [
         el('div', { class: 'head' }, [
           el('span', { class: 'badge ' + st[1], text: st[0] }),
-          el('span', { class: 'badge st-wait', text: KIND_LABEL[m.kind] || m.kind }),
+          el('span', { class: 'badge st-wait', text: kindLabel(m) }),
           m.company ? el('span', { class: 'badge st-run', text: '同じ会社のほかの案件で入れたもの' }) : null,
           matPlace(m) ? el('span', { class: 'badge st-wait', text: matPlace(m) }) : null,
           el('span', { class: 'name', text: m.name }),
@@ -512,15 +512,34 @@
     survey: { name: '例：事前アンケート', date: '日付（回答の日）' },
   };
 
+  /**
+   * 方針0〜2・方針3〜5のタブで入れられる種類と、その呼び方（2026-11-05 久夫さん指示）。
+   * この段で要件の文書や事前アンケートを入れることはないので、打ち合わせの録音・メモと、
+   * 方針0〜2で書き出した追加の質問票の回答だけにする。データの種類（text・audio・survey）は会社・要件のタブと同じ。
+   */
+  var STEP_KINDS = { s3: ['audio', 'text', 'survey'], s4: ['audio', 'text'] };
+  var STEP_KIND_LABEL = { text: '打ち合わせのメモ', audio: '打ち合わせの録音', survey: '追加の質問票の回答' };
+  var STEP_HOWS = { text: [['type', '文を打つ・貼る'], ['file', 'ファイルを選ぶ']], audio: [['file', '録音のファイル']], survey: [['file', 'ファイル'], ['type', '文を貼る']] };
+  var STEP_KIND_TEXT = {
+    text: { name: '例：2回目の打ち合わせのメモ', date: '日付（打ち合わせの日）' },
+    audio: { name: '例：ヒアリング②', date: '日付（打ち合わせの日）' },
+    survey: { name: '例：追加の質問票の回答', date: '日付（回答の日）' },
+  };
+
+  /** 材料の種類の呼び方（方針のタブで入れたものは、そのタブでの呼び方） */
+  function kindLabel(m) { return (STEP_KINDS[m.step] && STEP_KIND_LABEL[m.kind]) || KIND_LABEL[m.kind] || m.kind; }
+
   /** opts: { step: 入れたタブ（s3・s4。会社・要件のタブなら空）, kind: 最初に選んでおく種類, title: 見出し } */
   function addMaterialForm(opts) {
     opts = opts || {};
-    var kind = opts.kind || 'text', how = HOWS[kind][0][0];
+    var inStep = !!STEP_KINDS[opts.step];
+    var hows_ = inStep ? STEP_HOWS : HOWS, texts = inStep ? STEP_KIND_TEXT : KIND_TEXT;
+    var kind = opts.kind || 'text', how = hows_[kind][0][0];
     var file = null, durationSec = 0;
-    var kinds = el('div', { class: 'kinds' }, ['text', 'audio', 'survey'].map(function (k) {
+    var kinds = el('div', { class: 'kinds' }, (inStep ? STEP_KINDS[opts.step] : ['text', 'audio', 'survey']).map(function (k) {
       return el('label', {}, [el('input', { type: 'radio', name: 'm-kind', value: k, checked: k === kind, onchange: function () {
-        kind = k; how = HOWS[k][0][0]; clearFile(); refresh();
-      } }), KIND_LABEL[k]]);
+        kind = k; how = hows_[k][0][0]; clearFile(); refresh();
+      } }), inStep ? STEP_KIND_LABEL[k] : KIND_LABEL[k]]);
     }));
     var hows = el('div', { class: 'kinds' });
     var howBox = el('div', {}, [el('div', { class: 'field', text: '入れ方' }), hows]);
@@ -564,23 +583,27 @@
 
     function refresh() {
       // 入れ方の選択（2つ以上あるときだけ出す）
-      hows.replaceChildren.apply(hows, HOWS[kind].map(function (h) {
+      hows.replaceChildren.apply(hows, hows_[kind].map(function (h) {
         return el('label', {}, [el('input', { type: 'radio', name: 'm-how', value: h[0], checked: h[0] === how, onchange: function () { how = h[0]; clearFile(); refresh(); } }), h[1]]);
       }));
-      howBox.hidden = HOWS[kind].length < 2;
-      name.placeholder = KIND_TEXT[kind].name;
-      dateText.textContent = KIND_TEXT[kind].date;
+      howBox.hidden = hows_[kind].length < 2;
+      name.placeholder = texts[kind].name;
+      dateText.textContent = texts[kind].date;
       audioBox.hidden = kind !== 'audio';
       textBox.hidden = how !== 'type';
       driveBox.hidden = how !== 'drive';
       fileBox.hidden = how !== 'file';
-      textLabel.textContent = kind === 'survey' ? 'アンケートの回答（メールなどの文を貼る）' : '要件の文章（打つ・声で入れる・貼る）';
+      textLabel.textContent = inStep
+        ? (kind === 'survey' ? '質問票の回答（メールなどで届いた文を貼る）' : '打ち合わせのメモ（打つ・声で入れる・貼る）')
+        : (kind === 'survey' ? 'アンケートの回答（メールなどの文を貼る）' : '要件の文章（打つ・声で入れる・貼る）');
       fileInput.accept = kind === 'audio' ? 'audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm,.flac'
         : kind === 'survey' ? '.docx,.doc,.xlsx,.xls,.pdf,.csv,image/*'
         : '.docx,.doc,.xlsx,.xls,.pptx,.ppt,.pdf,.txt,.md,.csv,.tsv,.html,.htm';
       pick.textContent = kind === 'audio' ? '録音のファイルを選ぶ' : 'ファイルを選ぶ';
       fileNote.textContent = kind === 'audio' ? 'スマホの録音アプリで録ったファイル（m4a・mp3 など）を選びます。iPhone のボイスメモは、先に「"ファイル"に保存」してから選びます。'
+        : kind === 'survey' && inStep ? '書き出した追加の質問票に、お客様が書き込んだ Word を選びます。回答はヒアリング項目の回答欄に入ります（回答が入っている欄は上書きしません）。'
         : kind === 'survey' ? 'Word・Excel・PDF・csv・紙のアンケートの写真。書き出した質問票に書き込んでもらった Word なら、回答欄に自動で入ります。'
+        : inStep ? '打ち合わせのメモのファイル（Word・PDF・txt など）。中の文字を取り出して入れます。'
         : 'Word・Excel・PowerPoint・PDF・txt・md・csv・html。中の文字を取り出して入れます。';
       send.disabled = state.uploading || !file;
     }
@@ -658,7 +681,7 @@
   function openMaterial(m) {
     call('getMaterial', { caseId: state.c.id, materialId: m.id }, '読み込んでいます…', 'case-msg').then(function (res) {
       if (!res) return;
-      openDialog(m.name + '（' + KIND_LABEL[m.kind] + '）', '直すと、以降に作る・直す段でこの中身を使います。', res.text, function (text) {
+      openDialog(m.name + '（' + kindLabel(m) + '）', '直すと、以降に作る・直す段でこの中身を使います。', res.text, function (text) {
         return call('saveMaterial', { caseId: state.c.id, materialId: m.id, text: text }, '保存しています…', 'case-msg').then(function (r) { after(r, '材料を保存しました'); return !!r; });
       });
     });
@@ -1050,12 +1073,14 @@
     var mine = (state.c.materials || []).filter(function (m) { return m.step === step; });
     var open = state.matOpen[step] !== undefined ? state.matOpen[step] : !mine.length;
     var box = el('details', { class: 'panel stepmat', open: open || null }, [
-      el('summary', { text: '🎧 打ち合わせの録音を入れる' + (mine.length ? '（このタブで入れた材料 ' + mine.length + '本）' : '') }),
-      el('p', { class: 'sub', text: state.c.steps[step].content
-        ? 'この段の打ち合わせの録音を入れます。文字にし終わると、その内容を反映した案を作ります（1〜2分）。案ができると、この画面の上に「今の内容」と「反映した後」を比べる欄が出ます。よければ「反映する」を押してください。押すまで、今の内容は変わりません。'
-        : 'この段の打ち合わせの録音を入れます。文字にし終わった後に「Gemini で作る」を押すと、この録音も使って作ります。' }),
+      el('summary', { text: '🎧 打ち合わせの録音・メモを入れる' +(mine.length ? '（このタブで入れた材料 ' + mine.length + '本）' : '') }),
+      el('p', { class: 'sub', text: (step === 's3'
+        ? 'この段の打ち合わせの録音・メモと、書き出した追加の質問票の回答を入れます。'
+        : 'この段の打ち合わせの録音・メモを入れます。') + (state.c.steps[step].content
+        ? '文字にし終わると、その内容を反映した案を作ります（1〜2分）。案ができると、この画面の上に「今の内容」と「反映した後」を比べる欄が出ます。よければ「反映する」を押してください。押すまで、今の内容は変わりません。'
+        : '文字にし終わった後に「Gemini で作る」を押すと、これも使って作ります。') }),
       mine.length ? materialList(mine) : null,
-      addMaterialForm({ step: step, kind: 'audio', title: '録音・材料を入れる' }),
+      addMaterialForm({ step: step, kind: 'audio', title: '録音・メモを入れる' }),
     ]);
     box.addEventListener('toggle', function () { state.matOpen[step] = box.open; });
     return box;
