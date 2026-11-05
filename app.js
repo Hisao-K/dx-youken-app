@@ -306,7 +306,7 @@
     var org = document.querySelector('input[name="n-org"]:checked').value;
     call('createCase', {
       title: $('n-title').value, company: $('n-company').value, org_type: org, source: $('n-source').value,
-      saveDir: $('n-savedir').value, subdir: $('n-subdir').value, ref_urls: $('n-refs').value, text: $('n-text').value,
+      saveDir: $('n-savedir').value, ref_urls: $('n-refs').value, text: $('n-text').value,
     }, '登録しています…', 'new-msg').then(function (res) {
       if (!res) return;
       $('new-form').reset();
@@ -687,7 +687,7 @@
     [company, source, memo, refs, summary].forEach(function (x) { x.addEventListener('input', function () { state.dirty = true; }); });
     put($('tab-reg'), [
       el('div', { class: 'panel' }, [
-        el('div', { class: 'sub', text: '案件名：' + c.title + '／保存先：' + c.saveDir + (c.subdir ? '／' + c.subdir : '') }),
+        el('div', { class: 'sub', text: '案件名：' + c.title + '／フォルダ：案件／' + (c.subdir ? c.subdir + '／' : '') + c.title + '（会社名を直しても、フォルダは動きません）' }),
         orgs,
         el('label', { class: 'field' }, [word + '名（情報を調べるためだけに使う。分析のファイルには書かない）', company]),
         el('label', { class: 'field' }, ['相談の出どころ', source]),

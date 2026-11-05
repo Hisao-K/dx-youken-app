@@ -60,8 +60,8 @@
         </div>
         <label class="field">会社名・自治体名（情報を調べるためだけに使う。分析のファイルには書かない）<input id="n-company" maxlength="100"></label>
         <label class="field">相談の出どころ<input id="n-source" maxlength="200" placeholder="例：北九州市デジタル相談窓口／HPの問い合わせ"></label>
-        <label class="field">保存先<select id="n-savedir"></select></label>
-        <label class="field">サブフォルダ（任意）<input id="n-subdir" maxlength="200"></label>
+        <label class="field" hidden>保存先<select id="n-savedir"></select></label>
+        <p class="sub">保存先：共有ドライブ kamosbase の「案件」フォルダの下に、会社名・自治体名のフォルダ → 案件名のフォルダの順で作ります。</p>
         <label class="field">参照URL（任意。1行に1つ。入れると、会社情報の取得はこのページだけを読む）<textarea id="n-refs" rows="2"></textarea></label>
         <label class="field">要件の文章（任意。相談の原文・メモ。録音やアンケートは登録の後に「材料」から入れる）<textarea id="n-text" rows="6"></textarea></label>
         <div class="row"><button type="button" class="proof" data-target="n-text">誤変換を確かめる</button></div>
