@@ -16,7 +16,7 @@
 
   var state = {
     apiUrl: '', idToken: '', session: 0, tokenWaiters: [],
-    cfg: null, caseId: '', c: null, tab: 'reg', matOpen: {}, dirty: false, uploading: false, pollTimer: 0,
+    cfg: null, caseId: '', c: null, tab: 'reg', matOpen: {}, hosokuOpen: {}, dirty: false, uploading: false, pollTimer: 0,
   };
 
   // =========================
@@ -809,7 +809,8 @@
 
     var content = null, hearing = null;
     if (s.content) {
-      content = el('textarea', { id: 'step-content', class: 'doc', value: s.content, oninput: function () { state.dirty = true; } });
+      content = step === 's3' ? policyDoc(s.content)
+        : el('textarea', { id: 'step-content', class: 'doc', value: s.content, oninput: function () { state.dirty = true; } });
       parts.push(el('h3', { text: step === 's5' ? '分析' : step === 's3' ? '方針0〜2' : '方針（0〜5・付）' }), content);
       if (step === 's3') {
         parts.push(el('h3', { text: 'ヒアリング項目と回答' }));
@@ -850,10 +851,74 @@
     // 材料・指示は本文の後に置き、ボタンの行だけを画面の下に固定する（スマホで本文が隠れないように）
     parts = parts.concat(actionBar(step, content, hearing));
     put(box, parts);
-    if (content) autosize(content);
+    if (content) docAreas().forEach(autosize);
   }
 
-  window.addEventListener('resize', function () { var t = $('step-content'); if (t) autosize(t); });
+  window.addEventListener('resize', function () { docAreas().forEach(autosize); });
+
+  /** 段の本文の入力欄（方針0〜2は節ごとに分けた複数の欄。閉じた補足の欄は除く） */
+  function docAreas() {
+    return Array.prototype.filter.call(document.querySelectorAll('#step-content, #step-doc textarea'), function (t) { return t.offsetParent !== null; });
+  }
+
+  /**
+   * 方針0〜2の本文を、「### 補足」の前と後で分けて出す（2026-11-05 久夫さん指示）。
+   * 最初に見えるのは各節の要点（「## 」の見出しから最初の「### 」の前まで）だけ。「### 」の小節（補足・課題1〜3・そのほかの事実）は、
+   * 次の「## 」「### 」の見出しの前までをボタンで開く（2026-11-05 久夫さん指示：画面を開いたときは、簡潔にまとめた要件・ポイントだけを出す）。
+   * 保存するときは、分けた欄を元の順につなぎ直す（policyText）。
+   */
+  function splitPolicy(text) {
+    var segs = [], cur = null;
+    String(text || '').split('\n').forEach(function (line) {
+      var isHosoku = /^###\s/.test(line);
+      var isHead = /^#{2,3}\s/.test(line);
+      if (isHosoku) { cur = { kind: 'hosoku', head: line, lines: [] }; segs.push(cur); return; }
+      if (!cur || (cur.kind === 'hosoku' && isHead)) { cur = { kind: 'main', lines: [] }; segs.push(cur); }
+      cur.lines.push(line);
+    });
+    return segs;
+  }
+
+  function policyDoc(text) {
+    var box = el('div', { id: 'step-doc', class: 'policydoc' });
+    var title = '';
+    splitPolicy(text).forEach(function (seg, i) {
+      var area = el('textarea', { class: 'doc part', value: seg.lines.join('\n'), oninput: function () { state.dirty = true; } });
+      area.dataset.kind = seg.kind;
+      if (seg.kind === 'main') {
+        var h = seg.lines.filter(function (l) { return /^##\s/.test(l); })[0];
+        if (h) title = h.replace(/^##\s*/, '');
+        box.appendChild(area);
+        return;
+      }
+      area.dataset.head = seg.head;
+      var key = i + ':' + title;
+      var open = !!state.hosokuOpen[key];
+      area.hidden = !open;
+      var name = seg.head.replace(/^###\s*/, '');
+      var label = function () { return /^補足$/.test(name) ? (open ? '補足を閉じる' : '補足を表示') + (title ? '（' + title + '）' : '') : (open ? '▾ ' : '▸ ') + name; };
+      var btn = el('button', { type: 'button', class: 'small hosoku-btn', text: label() });
+      btn.addEventListener('click', function () {
+        open = !open;
+        state.hosokuOpen[key] = open;
+        area.hidden = !open;
+        btn.textContent = label();
+        if (open) autosize(area);
+      });
+      box.appendChild(el('div', { class: 'hosoku' }, [btn, area]));
+    });
+    return box;
+  }
+
+  /** 分けた欄を元の本文につなぎ直す */
+  function policyText() {
+    var out = [];
+    document.querySelectorAll('#step-doc textarea.part').forEach(function (t) {
+      if (t.dataset.kind === 'hosoku') out.push(t.dataset.head);
+      if (t.value !== '' || t.dataset.kind === 'main') out = out.concat(t.value.split('\n'));
+    });
+    return out.join('\n');
+  }
 
   /** 方針0〜2・方針3〜5のタブで、その段の打ち合わせの録音（ほかの材料も可）を入れる欄と、このタブで入れた材料の一覧 */
   function stepMaterials(step) {
@@ -936,6 +1001,7 @@
     var body = { caseId: state.c.id, step: step };
     var t = $('step-content');
     if (t) body.content = t.value;
+    else if ($('step-doc')) body.content = policyText();
     if (step === 's3' && $('hearing')) body.items = collectItems();
     return body;
   }
