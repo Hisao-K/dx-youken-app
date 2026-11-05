@@ -1100,11 +1100,35 @@
     var s = state.c.steps[state.tab];
     var box = $('step-status');
     if (!box) return;
-    box.replaceChildren.apply(box, stepBadges(s));
+    box.replaceChildren.apply(box, stepBadges(s, state.tab));
   }
 
-  function stepBadges(s) {
+  /** まだ取り込んでいないデスクの版（新しい順） */
+  function newDeskVersions(step) {
+    var c = state.c;
+    return ((c && c.desk && c.desk.versions) || []).filter(function (v) { return v.step === step && !v.applied; });
+  }
+
+  function deskApplyButton(v) {
+    return el('button', { class: 'small primary', text: 'デスクの版を取り込む', onclick: function () {
+      if (state.dirty && !confirm('保存していない直しがあります。デスクの版で置き換えますか？')) return;
+      if (!confirm('この段の中身を、デスクの版で置き換えます（今の中身は「取り込む前の版」に残ります）。よいですか？')) return;
+      call('applyDeskVersion', { caseId: state.c.id, fileId: v.fileId }, '取り込んでいます…', 'case-msg').then(function (r) {
+        // 取り込みの答えにはデスクの版の一覧が付かず、手元の一覧を使い続けるので、取り込んだ印をここで付ける
+        if (r && r.ok) v.applied = true;
+        after(r, 'デスクの版を取り込みました');
+      });
+    } });
+  }
+
+  function stepBadges(s, step) {
     var out = [el('div', { class: 'status', text: stepStatusText(s) })];
+    // 2026-11-05 デスクの版が届いたら、画面の上に出す（手で直している途中の読み直しでは下の欄が描き直されず、気づけなかったため）
+    var fresh = newDeskVersions(step);
+    if (fresh.length) out.push(el('div', { class: 'warn desk-new' }, [
+      el('div', { text: 'デスクの版が届きました：' + fresh[0].name + (fresh.length > 1 ? '（ほかに' + (fresh.length - 1) + '件）' : '') }),
+      el('div', { class: 'row' }, [deskApplyButton(fresh[0])]),
+    ]));
     var line = [];
     if (s.running) line.push(el('span', { class: 'badge st-run', text: 'Gemini が作っています（裏で進みます）' }));
     if (s.deskPending) line.push(el('span', { class: 'badge st-wait', text: 'デスクに依頼中（家のPCで「依頼を片づけて」）' }));
@@ -1121,7 +1145,7 @@
     var c = state.c;
     var s = c.steps[step];
     var box = $('tab-step');
-    var parts = [el('h2', { text: STEP_TAB[step] }), el('div', { id: 'step-status' }, stepBadges(s))];
+    var parts = [el('h2', { text: STEP_TAB[step] }), el('div', { id: 'step-status' }, stepBadges(s, step))];
     (c.warnings || []).forEach(function (w) { parts.push(el('div', { class: 'warn', text: w })); });
     var need = { s4: 's3', s5: 's4' }[step];
     if (need && !c.steps[need].ok) parts.push(el('div', { class: 'warn', text: '先に「' + STEP_TAB[need] + '」をOKしてください（作る・直すは、前の段のOKの後にできます）' }));
@@ -1160,11 +1184,7 @@
       parts.push(el('div', { class: 'list' }, versions.map(function (v) {
         return el('div', { class: 'mat' }, [
           el('div', { class: 'head' }, [el('span', { class: 'badge ' + (v.applied ? 'st-done' : 'st-run'), text: v.applied ? '取り込み済み' : '新しい版' }), el('span', { class: 'name', text: v.name })]),
-          v.applied ? null : el('div', { class: 'acts' }, [el('button', { class: 'small primary', text: 'デスクの版を取り込む', onclick: function () {
-            if (state.dirty && !confirm('保存していない直しがあります。デスクの版で置き換えますか？')) return;
-            if (!confirm('この段の中身を、デスクの版で置き換えます（今の中身は「取り込む前の版」に残ります）。よいですか？')) return;
-            call('applyDeskVersion', { caseId: c.id, fileId: v.fileId }, '取り込んでいます…', 'case-msg').then(function (r) { after(r, 'デスクの版を取り込みました'); });
-          } })]),
+          v.applied ? null : el('div', { class: 'acts' }, [deskApplyButton(v)]),
         ]);
       })));
     }
