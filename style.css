@@ -167,3 +167,13 @@ table.hearing tr.grp th { border-left: 4px solid var(--orange); }
 .dlg::backdrop { background: rgba(0, 0, 0, .35); }
 .dlg h3 { margin-top: 4px; }
 .dlg textarea { min-height: 55vh; }
+
+/* 材料を反映した案の確認欄（2026-11-05） */
+.proposal { border: 2px solid #E7741D; }
+.proposal h4 { margin: 10px 0 4px; }
+.diff { font-size: 0.92em; line-height: 1.6; border-radius: 8px; overflow: hidden; }
+.diff > div { padding: 1px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .add { background: rgba(46, 160, 67, 0.22); }
+.diff .del { background: rgba(248, 81, 73, 0.22); text-decoration: line-through; }
+.diff .same { opacity: 0.75; }
+.diff .skip { opacity: 0.6; font-style: italic; }

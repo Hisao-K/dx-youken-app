@@ -634,7 +634,7 @@
         keepAwake(false);
         refreshCase(false).then(function () {
           msg('case-msg', (kind === 'audio' ? '受け付けました。文字起こしは裏で進みます（アプリを閉じても続きます）。終わると「文字にした」になります。' : '受け付けました。文字にし終わると「文字にした」になります。') +
-            (opts.step ? '文字にし終わると、下の「使う材料」にチェックが入ります。' : ''), 'ok');
+            (opts.step && state.c.steps[opts.step].content ? '文字にし終わると、反映した案を作ります。案ができたら、比べてから「反映する」を押してください。' : ''), 'ok');
         });
       } catch (e) {
         progress.hidden = true;
@@ -791,6 +791,7 @@
     if (s.deskPending) line.push(el('span', { class: 'badge st-wait', text: 'デスクに依頼中（家のPCで「依頼を片づけて」）' }));
     if (s.content && s.review === 'needed') line.push(el('span', { class: 'badge st-run', text: 'デスクのレビュー前' }));
     if (s.stale) line.push(el('span', { class: 'badge st-err', text: '前の段か登録内容が変わった' }));
+    if (s.proposal) line.push(el('span', { class: 'badge st-run', text: s.proposal.status === 'ready' ? '反映前の案あり' : s.proposal.status === 'error' ? '案を作れなかった' : '材料を反映した案を作っています' }));
     if (line.length) out.push(el('div', {}, line));
     if (s.fallbackModel) out.push(el('div', { class: 'warn', text: '設定のモデルが使えないため、' + s.fallbackModel + ' で作りました。' }));
     if (s.error) out.push(el('div', { class: 'errbox', text: s.error }));
@@ -805,6 +806,7 @@
     (c.warnings || []).forEach(function (w) { parts.push(el('div', { class: 'warn', text: w })); });
     var need = { s4: 's3', s5: 's4' }[step];
     if (need && !c.steps[need].ok) parts.push(el('div', { class: 'warn', text: '先に「' + STEP_TAB[need] + '」をOKしてください（作る・直すは、前の段のOKの後にできます）' }));
+    if (s.proposal) parts.push(proposalPanel(step));
     if (step === 's3' || step === 's4') parts.push(stepMaterials(step));
 
     var content = null, hearing = null;
@@ -829,7 +831,7 @@
       if (s.sorting) parts.push(el('details', {}, [el('summary', { text: 'デスクのレビュー（指摘と仕分け）' }), el('div', { class: 'readonly', text: s.sorting })]));
       if (s.before && s.before.content) parts.push(el('details', {}, [el('summary', { text: '取り込む前の版（' + hm(s.before.time) + '）' }), el('div', { class: 'readonly', text: s.before.content })]));
     } else {
-      parts.push(el('p', { class: 'sub', text: 'まだ作っていません。下で材料を選び、「Gemini で作る」か「デスクに頼む」を押してください。' }));
+      parts.push(el('p', { class: 'sub', text: 'まだ作っていません。「Gemini で作る」か「デスクに頼む」を押してください。入れた材料（文字になったもの）をすべて使って作ります。' }));
     }
 
     // デスクの版
@@ -849,7 +851,7 @@
     }
 
     // 材料・指示は本文の後に置き、ボタンの行だけを画面の下に固定する（スマホで本文が隠れないように）
-    parts = parts.concat(actionBar(step, content, hearing));
+    parts = parts.concat(actionBar(step));
     put(box, parts);
     if (content) docAreas().forEach(autosize);
   }
@@ -920,13 +922,138 @@
     return out.join('\n');
   }
 
+  /**
+   * 材料を反映した案の確認欄（2026-11-05 久夫さん指示）。録音などで前提が変わることがあるので、
+   * 今の内容と反映した後を比べ、「反映する」を押したときだけ段の中身に入れる。
+   */
+  function proposalPanel(step) {
+    var c = state.c;
+    var s = c.steps[step];
+    var p = s.proposal;
+    var names = '「' + (p.names || []).join('」「') + '」';
+    var discard = el('button', { class: 'small', text: p.status === 'ready' ? '反映しない' : '案を消す', onclick: function () {
+      if (!confirm(p.status === 'ready' ? 'この案を反映せずに消しますか？（今の内容はそのままです）' : '作っている案を消しますか？')) return;
+      call('discardProposal', { caseId: c.id, step: step }, '消しています…', 'case-msg').then(function (r) { after(r, '案を消しました。今の内容はそのままです'); });
+    } });
+    if (p.status === 'making') {
+      return el('div', { class: 'panel proposal' }, [
+        el('h3', { text: names + 'を反映した案を作っています' }),
+        el('p', { class: 'sub', text: '1〜2分かかります（裏で進みます）。できると、ここに今の内容との違いが出ます。' }),
+        p.error ? el('div', { class: 'warn', text: p.error }) : null,
+        el('div', { class: 'row' }, [discard]),
+      ]);
+    }
+    if (p.status === 'error') {
+      return el('div', { class: 'panel proposal' }, [
+        el('h3', { text: names + 'を反映した案を作れませんでした' }),
+        el('div', { class: 'errbox', text: p.error || '' }),
+        el('p', { class: 'sub', text: '今の内容はそのままです。案を消してから、材料を入れ直してください。' }),
+        el('div', { class: 'row' }, [discard]),
+      ]);
+    }
+    var changed = s.updated && p.base && String(s.updated) > String(p.base);
+    var diff = diffView(s.content, p.content);
+    var itemDiff = step === 's3' ? itemsDiffView(s.items || [], p.items || []) : null;
+    var apply = el('button', { class: 'primary', text: '反映する', onclick: function () {
+      if (state.dirty && !confirm('保存していない直しがあります。反映すると消えます。反映しますか？')) return;
+      if (changed && !confirm('この案を作った後に、手で直した内容があります。反映すると、その直しは消えます（「取り込む前の版」には残ります）。反映しますか？')) return;
+      call('applyProposal', { caseId: c.id, step: step }, '反映しています…', 'case-msg').then(function (r) { after(r, '反映しました。前の内容は「取り込む前の版」に残っています'); });
+    } });
+    return el('div', { class: 'panel proposal' }, [
+      el('h3', { text: names + 'を反映した案ができました' }),
+      el('p', { class: 'sub', text: '今の内容から、次のように変わります。打ち合わせで前提が変わっていないか確かめ、よければ「反映する」を押してください。押すまで、今の内容は変わりません。' }),
+      changed ? el('div', { class: 'warn', text: 'この案を作った後に、手で直した内容があります。反映すると、その直しは消えます。' }) : null,
+      el('h4', { text: STEP_TAB[step].replace('・ヒアリング', '') + 'の文章' }),
+      diff,
+      itemDiff ? el('h4', { text: 'ヒアリング項目と回答' }) : null,
+      itemDiff,
+      el('details', {}, [el('summary', { text: '反映した後の全文を見る' }), el('div', { class: 'readonly', text: p.content })]),
+      el('div', { class: 'row' }, [apply, discard]),
+    ]);
+  }
+
+  /** 2つの文章の行ごとの違い（[['=', 行] | ['-', 行] | ['+', 行]]） */
+  function lineDiff(a, b) {
+    var A = String(a || '').split('\n'), B = String(b || '').split('\n');
+    var n = A.length, m = B.length, pre = 0, suf = 0;
+    while (pre < n && pre < m && A[pre] === B[pre]) pre++;
+    while (suf < n - pre && suf < m - pre && A[n - 1 - suf] === B[m - 1 - suf]) suf++;
+    var a2 = A.slice(pre, n - suf), b2 = B.slice(pre, m - suf);
+    var L = [], i, j;
+    for (i = 0; i <= a2.length; i++) L.push(new Int32Array(b2.length + 1));
+    for (i = a2.length - 1; i >= 0; i--) for (j = b2.length - 1; j >= 0; j--) L[i][j] = a2[i] === b2[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    var ops = A.slice(0, pre).map(function (l) { return ['=', l]; });
+    i = 0; j = 0;
+    while (i < a2.length && j < b2.length) {
+      if (a2[i] === b2[j]) { ops.push(['=', a2[i]]); i++; j++; }
+      else if (L[i + 1][j] >= L[i][j + 1]) ops.push(['-', a2[i++]]);
+      else ops.push(['+', b2[j++]]);
+    }
+    while (i < a2.length) ops.push(['-', a2[i++]]);
+    while (j < b2.length) ops.push(['+', b2[j++]]);
+    return ops.concat(A.slice(n - suf).map(function (l) { return ['=', l]; }));
+  }
+
+  /** 違いの表示。変わった行の前後1行と、その節の見出しだけを出し、ほかは「…（変わらない N行）」にまとめる */
+  function diffView(a, b) {
+    var ops = lineDiff(a, b);
+    if (!ops.some(function (o) { return o[0] !== '='; })) return el('p', { class: 'sub', text: '文章は変わりません。' });
+    var keep = ops.map(function () { return false; });
+    ops.forEach(function (o, k) {
+      if (o[0] === '=') return;
+      keep[k] = true;
+      if (k > 0) keep[k - 1] = true;
+      if (k + 1 < ops.length) keep[k + 1] = true;
+      // その行が入っている節の見出し（####・###・## を近い順に1つずつ）も出す
+      var minLv = 9;
+      for (var h = k - 1; h >= 0 && minLv > 2; h--) {
+        var hm2 = ops[h][0] === '=' && ops[h][1].match(/^(#{2,4})\s/);
+        if (hm2 && hm2[1].length < minLv) { keep[h] = true; minLv = hm2[1].length; }
+      }
+    });
+    var box = el('div', { class: 'diff' });
+    var skipped = 0;
+    function flush() { if (skipped) box.appendChild(el('div', { class: 'skip', text: '…（変わらない ' + skipped + '行）' })); skipped = 0; }
+    ops.forEach(function (o, k) {
+      if (!keep[k]) { skipped++; return; }
+      flush();
+      box.appendChild(el('div', { class: o[0] === '+' ? 'add' : o[0] === '-' ? 'del' : 'same', text: (o[0] === '+' ? '＋ ' : o[0] === '-' ? '－ ' : '　 ') + (o[1] || ' ') }));
+    });
+    flush();
+    return box;
+  }
+
+  /** ヒアリング項目の違い：回答が入る問い・足す問い・なくなる問い */
+  function itemsDiffView(cur, neu) {
+    var norm = function (t) { return String(t || '').replace(/\s+/g, ''); };
+    var byText = {};
+    cur.forEach(function (it) { byText[norm(it.item)] = it; });
+    var neuText = {};
+    neu.forEach(function (it) { neuText[norm(it.item)] = true; });
+    var answered = [], added = [];
+    neu.forEach(function (it) {
+      var old = byText[norm(it.item)];
+      if (!old) { added.push(it); return; }
+      if (String(it.answer || '').trim() !== String(old.answer || '').trim() && String(it.answer || '').trim()) answered.push(it);
+    });
+    var removed = cur.filter(function (it) { return !neuText[norm(it.item)]; });
+    if (!answered.length && !added.length && !removed.length) return el('p', { class: 'sub', text: 'ヒアリング項目と回答は変わりません。' });
+    var box = el('div', { class: 'diff' });
+    answered.forEach(function (it) { box.appendChild(el('div', { class: 'add', text: '＋ 回答が入る：#' + it.no + ' ' + it.item + ' → ' + it.answer + (it.source ? '（' + it.source + '）' : '') })); });
+    added.forEach(function (it) { box.appendChild(el('div', { class: 'add', text: '＋ 問いを足す：#' + it.no + ' ' + it.item + (it.answer ? ' → ' + it.answer : '') })); });
+    removed.forEach(function (it) { box.appendChild(el('div', { class: 'del', text: '－ 問いがなくなる：#' + it.no + ' ' + it.item + (it.answer ? '（回答：' + it.answer + '）' : '') })); });
+    return box;
+  }
+
   /** 方針0〜2・方針3〜5のタブで、その段の打ち合わせの録音（ほかの材料も可）を入れる欄と、このタブで入れた材料の一覧 */
   function stepMaterials(step) {
     var mine = (state.c.materials || []).filter(function (m) { return m.step === step; });
     var open = state.matOpen[step] !== undefined ? state.matOpen[step] : !mine.length;
     var box = el('details', { class: 'panel stepmat', open: open || null }, [
       el('summary', { text: '🎧 打ち合わせの録音を入れる' + (mine.length ? '（このタブで入れた材料 ' + mine.length + '本）' : '') }),
-      el('p', { class: 'sub', text: 'この段の打ち合わせの録音を入れます。文字にし終わると、下の「使う材料」に最初からチェックが入ります。そのまま「Gemini で' + (state.c.steps[step].content ? '直す' : '作る') + '」を押すと、方針' + (step === 's3' ? 'とヒアリングの回答欄' : '') + 'に反映します。' }),
+      el('p', { class: 'sub', text: state.c.steps[step].content
+        ? 'この段の打ち合わせの録音を入れます。文字にし終わると、その内容を反映した案を作ります（1〜2分）。案ができると、この画面の上に「今の内容」と「反映した後」を比べる欄が出ます。よければ「反映する」を押してください。押すまで、今の内容は変わりません。'
+        : 'この段の打ち合わせの録音を入れます。文字にし終わった後に「Gemini で作る」を押すと、この録音も使って作ります。' }),
       mine.length ? materialList(mine) : null,
       addMaterialForm({ step: step, kind: 'audio', title: '録音・材料を入れる' }),
     ]);
@@ -934,11 +1061,6 @@
     return box;
   }
 
-  /** このタブで入れ、この段にまだ使っていない材料（「使う材料」に最初からチェックを入れる） */
-  function freshFor(step, m) {
-    var s = state.c.steps[step];
-    return m.step === step && (!s.updated || String(m.doneAt || m.created || '') > String(s.updated));
-  }
 
   /** ヒアリング項目の表（区分ごと。問い・回答・【要確認】・出どころ） */
   function hearingTable(items) {
@@ -1006,49 +1128,38 @@
     return body;
   }
 
-  /** 段の下に固定する操作の行：材料を選ぶ・直しの指示・Gemini で作る／デスクに頼む・保存・OK */
-  function actionBar(step, content) {
+  /**
+   * 段の下に固定する操作の行。
+   * 2026-11-05 久夫さん指示で「材料・指示で直す」の欄はなくした：本文は手で直して「保存」、材料（録音など）を入れたときは反映した案を比べて「反映する」。
+   * 作る：入れた材料（文字になったもの）をすべて使う。デスクに頼む：中身がなければ作る、あればレビューして直す。
+   */
+  function actionBar(step) {
     var c = state.c;
     var s = c.steps[step];
-    var mats = (c.materials || []).concat(c.companySurveys || []).filter(function (m) { return m.status === 'done'; });
-    var picks = mats.map(function (m) {
-      return el('label', {}, [el('input', { type: 'checkbox', value: m.id, class: 'matpick-box', checked: freshFor(step, m) }), ' ' + KIND_LABEL[m.kind] + '：' + m.name]);
-    });
-    var instruction = el('textarea', { id: 'instruction', rows: '2', placeholder: s.content ? '直しの指示（例：目的の数字を月20時間に直して）。空なら選んだ材料で直す' : '作るときの注意（任意）' });
-    var mode = s.content ? 'revise' : 'make';
-    function chosen() { return Array.prototype.map.call(document.querySelectorAll('.matpick-box:checked'), function (x) { return x.value; }); }
-    function stepParams() { return { caseId: c.id, step: step, mode: mode, instruction: instruction.value, materialIds: chosen() }; }
     function saveFirst() {
       if (!state.dirty) return Promise.resolve(true);
       return call('edit', editBody(step), '手で直した内容を保存しています…', 'case-msg').then(function (r) { if (r) { state.c = r.case; state.dirty = false; } return !!r; });
     }
     var okLabel = step === 's5' ? 'OKしてmdに保存' : 'OKして次へ';
-    var compose = el('div', { class: 'panel' }, [
-      el('h3', { text: s.content ? '材料・指示で直す' : '材料から作る' }),
-      mats.length ? el('div', { class: 'matpick' }, [el('span', { class: 'sub', text: '使う材料：' })].concat(picks)) : el('div', { class: 'sub', text: '材料がありません（' + (step === 's5' ? '「会社・要件」のタブ' : '上の「打ち合わせの録音を入れる」か、「会社・要件」のタブ') + 'で入れる）' }),
-      el('div', { class: 'row' }, [instruction]),
-      el('div', { class: 'row' }, [el('button', { class: 'small proof', 'data-target': 'instruction', text: '誤変換を確かめる' })]),
-      el('p', { class: 'sub', text: '外では「Gemini」（30秒〜1分）、家では「デスクに頼む」（家のPCの Claude Code が作る）を選びます。' }),
-    ]);
     var bar = el('div', { class: 'actionbar' }, [
       el('div', { class: 'row' }, [
-        el('button', { class: 'small primary', text: s.content ? 'Gemini で直す' : 'Gemini で作る', disabled: !!s.running, onclick: function () {
-          if (mode === 'revise' && !instruction.value.trim() && !chosen().length) { alert('直しの指示を書くか、使う材料を選んでください'); return; }
-          saveFirst().then(function (okSaved) {
-            if (!okSaved) return;
-            call('runStep', stepParams(), '受け付けています…', 'case-msg').then(function (r) { after(r, '受け付けました。Gemini が作っています（30秒〜1分ほど。裏で進みます）'); });
-          });
+        s.content ? null : el('button', { class: 'small primary', text: 'Gemini で作る', disabled: !!s.running, onclick: function () {
+          call('runStep', { caseId: c.id, step: step, mode: 'make', instruction: '', materialIds: [] }, '受け付けています…', 'case-msg')
+            .then(function (r) { after(r, '受け付けました。Gemini が作っています（30秒〜1分ほど。裏で進みます）'); });
         } }),
-        el('button', { class: 'small', text: 'デスクに頼む', onclick: function () {
+        el('button', { class: 'small', text: s.content ? 'デスクにレビューを頼む' : 'デスクに頼む', onclick: function () {
           saveFirst().then(function (okSaved) {
             if (!okSaved) return;
-            call('requestDesk', stepParams(), '依頼を置いています…', 'case-msg').then(function (r) { after(r, 'デスクへの依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください'); });
+            var p = s.content ? { mode: 'revise', instruction: 'レビューして、採用した指摘で直す' } : { mode: 'make', instruction: '' };
+            call('requestDesk', { caseId: c.id, step: step, mode: p.mode, instruction: p.instruction, materialIds: [] }, '依頼を置いています…', 'case-msg')
+              .then(function (r) { after(r, 'デスクへの依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください'); });
           });
         } }),
         s.content ? el('button', { class: 'small', text: '保存', title: '手で直した内容を保存', onclick: function () {
           call('edit', editBody(step), '保存しています…', 'case-msg').then(function (r) { after(r, '保存しました'); });
         } }) : null,
         s.content ? el('button', { class: 'small primary', text: okLabel, onclick: function () {
+          if (s.proposal && s.proposal.status === 'ready' && !confirm('材料を反映した案が、まだ反映も取り消しもされていません。案を反映しないまま OK にしますか？')) return;
           if (s.review === 'needed' && !confirm('この段は「デスクのレビュー前」です。お客様に出す前にデスクのレビューを受けてください。このまま OK にしますか？')) return;
           var body = editBody(step);
           call('ok', body, 'OK にして md に書き出しています…', 'case-msg').then(function (r) {
@@ -1060,7 +1171,7 @@
         } }) : null,
       ].filter(Boolean)),
     ]);
-    return [compose, bar];
+    return [bar];
   }
 
   // =========================
