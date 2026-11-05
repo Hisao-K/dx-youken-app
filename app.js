@@ -1443,8 +1443,15 @@
     });
     var orals = items.filter(function (it) { return it.oral; });
     if (orals.length) {
-      table.appendChild(el('tr', { class: 'grp' }, [el('th', { colspan: '3', text: (state.cfg && state.cfg.oralLabel) || '面談で口頭で聞く問い' })]));
-      orals.forEach(function (it) { table.appendChild(row(it)); });
+      var oralLabel = (state.cfg && state.cfg.oralLabel) || '面談で口頭で聞く問い';
+      // 口頭で聞く問いも、課題の番号とタイトルの区分ごとに分けて出す（2026-11-05 久夫さん指示：問いを課題に合わせる）
+      var keys = groups.map(function (x) { return x.key; });
+      groups.concat([{ key: 'other', label: '区分なし' }]).forEach(function (g) {
+        var rows = orals.filter(function (it) { return g.key === 'other' ? keys.indexOf(it.group) < 0 : it.group === g.key; });
+        if (!rows.length) return;
+        table.appendChild(el('tr', { class: 'grp' }, [el('th', { colspan: '3', text: oralLabel + '：' + g.label })]));
+        rows.forEach(function (it) { table.appendChild(row(it)); });
+      });
     }
     return table;
   }
