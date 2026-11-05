@@ -64,7 +64,7 @@
         <p class="sub">保存先：共有ドライブ kamosbase の「案件」フォルダの下に、会社名・自治体名のフォルダ → 案件名のフォルダの順で作ります。</p>
         <label class="field">参照URL（任意。1行に1つ。入れると、会社情報の取得はこのページだけを読む）<textarea id="n-refs" rows="2"></textarea></label>
         <p class="sub">登録すると、会社情報の取得（Google 検索）を自動で始めます。</p>
-        <label class="field">要件の文章（任意。相談の原文・メモ。録音やアンケートは登録の後に「材料」から入れる）<textarea id="n-text" rows="6"></textarea></label>
+        <label class="field">要件の文章（任意。相談の原文・メモ。録音やアンケートは登録の後に「会社・要件」のタブから入れる）<textarea id="n-text" rows="6"></textarea></label>
         <div class="row"><button type="button" class="proof" data-target="n-text">誤変換を確かめる</button></div>
         <button id="new-save" type="button" class="primary">登録する</button>
         <p id="new-msg" class="msg"></p>
@@ -77,14 +77,12 @@
     <section id="view-case" class="view" hidden>
       <div id="case-head" class="case-head"></div>
       <nav class="tabs" role="tablist">
-        <button data-tab="mat" role="tab">材料</button>
-        <button data-tab="reg" role="tab">登録</button>
+        <button data-tab="reg" role="tab">会社・要件</button>
         <button data-tab="s3" role="tab">方針0〜2</button>
         <button data-tab="s4" role="tab">方針3〜5</button>
         <button data-tab="s5" role="tab">分析</button>
       </nav>
       <p id="case-msg" class="msg"></p>
-      <div id="tab-mat" class="tab" hidden></div>
       <div id="tab-reg" class="tab" hidden></div>
       <div id="tab-step" class="tab" hidden></div>
     </section>

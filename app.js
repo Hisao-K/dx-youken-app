@@ -16,7 +16,7 @@
 
   var state = {
     apiUrl: '', idToken: '', session: 0, tokenWaiters: [],
-    cfg: null, caseId: '', c: null, tab: 'mat', dirty: false, uploading: false, pollTimer: 0,
+    cfg: null, caseId: '', c: null, tab: 'reg', matOpen: {}, dirty: false, uploading: false, pollTimer: 0,
   };
 
   // =========================
@@ -210,7 +210,7 @@
     state.dirty = false;
     state.c = null;
     state.caseId = '';
-    ['case-list', 'case-head', 'tab-mat', 'tab-reg', 'tab-step'].forEach(function (id) { $(id).replaceChildren(); });
+    ['case-list', 'case-head', 'tab-reg', 'tab-step'].forEach(function (id) { $(id).replaceChildren(); });
     $('new-form').reset();
     $('new-form').hidden = true;
     show('login');
@@ -311,7 +311,7 @@
       if (!res) return;
       $('new-form').reset();
       $('new-form').hidden = true;
-      openCase(res.case.id, 'mat').then(function () {
+      openCase(res.case.id, 'reg').then(function () {
         msg('case-msg', '登録しました。会社情報の取得を始めています（1〜2分。裏で進むので、そのまま材料を入れて構いません）。', 'ok');
       });
     });
@@ -407,7 +407,7 @@
     ]);
     document.querySelectorAll('.tabs button').forEach(function (b) {
       var t = b.dataset.tab;
-      var label = { mat: '材料', reg: '登録', s3: '方針0〜2', s4: '方針3〜5', s5: '分析' }[t];
+      var label = { reg: '会社・要件', s3: '方針0〜2', s4: '方針3〜5', s5: '分析' }[t];
       var s = c.steps[t];
       if (s) label += s.deskPending ? ' 🕐' : s.review === 'needed' && s.content ? ' ●' : s.ok ? ' ✓' : '';
       if (s && s.stale) label += '！';
@@ -430,12 +430,13 @@
   });
 
   function renderTab() {
-    $('tab-mat').hidden = state.tab !== 'mat';
     $('tab-reg').hidden = state.tab !== 'reg';
     $('tab-step').hidden = !isStepTab();
+    // 材料を入れる欄はタブごとに1つだけ置く（同じ id の欄が隠れたタブに残らないように、見ていないタブは空にする）
+    if (state.tab !== 'reg') $('tab-reg').replaceChildren();
+    if (!isStepTab()) $('tab-step').replaceChildren();
     msg('case-msg', '');
-    if (state.tab === 'mat') renderMaterials();
-    else if (state.tab === 'reg') renderReg();
+    if (state.tab === 'reg') renderReg();
     else renderStep(state.tab);
   }
 
@@ -455,11 +456,10 @@
     queued: ['待機中', 'st-wait'], uploading: ['アップロード中', 'st-wait'],
   };
 
-  function renderMaterials() {
+  /** 材料の一覧（状態・中身を見る・やり直す・外す） */
+  function materialList(list) {
     var c = state.c;
-    var box = $('tab-mat');
-    var all = (c.materials || []).concat(c.companySurveys || []);
-    var list = el('div', { class: 'list' }, all.map(function (m) {
+    return el('div', { class: 'list' }, list.map(function (m) {
       var st = MAT_STATUS[m.status] || ['不明', 'st-wait'];
       var ir = m.importResult;
       return el('div', { class: 'mat' }, [
@@ -467,6 +467,7 @@
           el('span', { class: 'badge ' + st[1], text: st[0] }),
           el('span', { class: 'badge st-wait', text: KIND_LABEL[m.kind] || m.kind }),
           m.company ? el('span', { class: 'badge st-run', text: '同じ会社のほかの案件で入れたもの' }) : null,
+          matPlace(m) ? el('span', { class: 'badge st-wait', text: matPlace(m) }) : null,
           el('span', { class: 'name', text: m.name }),
         ]),
         el('div', { class: 'sub', text: [m.date, m.chars ? m.chars.toLocaleString() + '字' : '', m.durationSec ? Math.round(m.durationSec / 60) + '分の録音' : '', m.progress].filter(String).join('｜') }),
@@ -491,12 +492,10 @@
         ]),
       ]);
     }));
-    put(box, [
-      el('p', { class: 'sub', text: '方針を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。どの段からでも、選んで使えます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
-      all.length ? list : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
-      addMaterialForm(),
-    ]);
   }
+
+  /** 材料を入れるタブの名前（材料の一覧に「どこで入れたか」を出す） */
+  function matPlace(m) { return m.step === 's3' ? '方針0〜2で入れた' : m.step === 's4' ? '方針3〜5で入れた' : ''; }
 
   /**
    * 材料を入れる画面。種類（要件の文章・録音・アンケートの結果）を選び、入れ方が2つ以上ある種類は入れ方も選ぶ。
@@ -513,8 +512,10 @@
     survey: { name: '例：事前アンケート', date: '日付（回答の日）' },
   };
 
-  function addMaterialForm() {
-    var kind = 'text', how = 'type';
+  /** opts: { step: 入れたタブ（s3・s4。会社・要件のタブなら空）, kind: 最初に選んでおく種類, title: 見出し } */
+  function addMaterialForm(opts) {
+    opts = opts || {};
+    var kind = opts.kind || 'text', how = HOWS[kind][0][0];
     var file = null, durationSec = 0;
     var kinds = el('div', { class: 'kinds' }, ['text', 'audio', 'survey'].map(function (k) {
       return el('label', {}, [el('input', { type: 'radio', name: 'm-kind', value: k, checked: k === kind, onchange: function () {
@@ -599,11 +600,11 @@
 
     function addText() {
       if (!textArea.value.trim()) { msg('', ''); out.textContent = '文を入れてください'; out.className = 'msg err'; return; }
-      call('addText', { caseId: state.c.id, kind: kind, name: name.value, date: date.value, text: textArea.value }, '入れています…', 'case-msg')
+      call('addText', { caseId: state.c.id, kind: kind, name: name.value, date: date.value, text: textArea.value, step: opts.step || '' }, '入れています…', 'case-msg')
         .then(function (r) { after(r, '材料に入れました'); });
     }
     function addDrive() {
-      call('addDriveFile', { caseId: state.c.id, kind: 'survey', name: name.value, date: date.value, url: driveUrl.value }, '受け付けています…', 'case-msg')
+      call('addDriveFile', { caseId: state.c.id, kind: 'survey', name: name.value, date: date.value, url: driveUrl.value, step: opts.step || '' }, '受け付けています…', 'case-msg')
         .then(function (r) { after(r, '受け付けました。文字にし終わると「文字にした」になります'); });
     }
     async function sendFile() {
@@ -617,7 +618,7 @@
       try {
         var startRes = await api('uploadStart', {
           caseId: state.c.id, kind: kind, name: name.value, date: date.value, fileName: file.name, mimeType: file.type || '',
-          size: file.size, durationSec: durationSec, attendees: attendees.value, glossary: glossary.value,
+          size: file.size, durationSec: durationSec, attendees: attendees.value, glossary: glossary.value, step: opts.step || '',
         });
         if (!startRes.ok) throw new Error(errText(startRes));
         var offset = 0;
@@ -632,7 +633,8 @@
         state.uploading = false;
         keepAwake(false);
         refreshCase(false).then(function () {
-          msg('case-msg', kind === 'audio' ? '受け付けました。文字起こしは裏で進みます（アプリを閉じても続きます）。終わると「文字にした」になります。' : '受け付けました。文字にし終わると「文字にした」になります。', 'ok');
+          msg('case-msg', (kind === 'audio' ? '受け付けました。文字起こしは裏で進みます（アプリを閉じても続きます）。終わると「文字にした」になります。' : '受け付けました。文字にし終わると「文字にした」になります。') +
+            (opts.step ? '文字にし終わると、下の「使う材料」にチェックが入ります。' : ''), 'ok');
         });
       } catch (e) {
         progress.hidden = true;
@@ -646,7 +648,7 @@
     }
 
     var form = el('div', { class: 'panel' }, [
-      el('h3', { text: '材料を入れる' }), kinds, howBox, nameLabel, dateLabel,
+      el('h3', { text: opts.title || '材料を入れる' }), kinds, howBox, nameLabel, dateLabel,
       audioBox, textBox, driveBox, fileBox, out,
     ]);
     refresh();
@@ -727,6 +729,7 @@
       el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'company', checked: org === 'company' }), ' 会社']),
       el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'municipality', checked: org === 'municipality' }), ' 自治体他'])]);
     [company, source, memo, refs, summary].forEach(function (x) { x.addEventListener('input', function () { state.dirty = true; }); });
+    var allMats = (c.materials || []).concat(c.companySurveys || []);
     put($('tab-reg'), [
       el('div', { class: 'panel' }, [
         el('div', { class: 'sub', text: '案件名：' + c.title + '／フォルダ：案件／' + (c.subdir ? c.subdir + '／' : '') + c.title + '（会社名を直しても、フォルダは動きません）' }),
@@ -748,6 +751,10 @@
           } }),
         ]),
       ]),
+      el('h3', { text: '要件（材料）' }),
+      el('p', { class: 'sub', text: '方針を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。打ち合わせの録音は、方針0〜2・方針3〜5のタブからも入れられます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
+      allMats.length ? materialList(allMats) : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
+      addMaterialForm({ kind: 'text' }),
       el('h3', { text: word + '情報' }),
       c.company_info_stale ? el('div', { class: 'warn', text: '名前か種類を直した後、情報を取得し直していません。' }) : null,
       c.companyError ? el('div', { class: 'errbox', text: c.companyError }) : null,
@@ -798,6 +805,7 @@
     (c.warnings || []).forEach(function (w) { parts.push(el('div', { class: 'warn', text: w })); });
     var need = { s4: 's3', s5: 's4' }[step];
     if (need && !c.steps[need].ok) parts.push(el('div', { class: 'warn', text: '先に「' + STEP_TAB[need] + '」をOKしてください（作る・直すは、前の段のOKの後にできます）' }));
+    if (step === 's3' || step === 's4') parts.push(stepMaterials(step));
 
     var content = null, hearing = null;
     if (s.content) {
@@ -846,6 +854,26 @@
   }
 
   window.addEventListener('resize', function () { var t = $('step-content'); if (t) autosize(t); });
+
+  /** 方針0〜2・方針3〜5のタブで、その段の打ち合わせの録音（ほかの材料も可）を入れる欄と、このタブで入れた材料の一覧 */
+  function stepMaterials(step) {
+    var mine = (state.c.materials || []).filter(function (m) { return m.step === step; });
+    var open = state.matOpen[step] !== undefined ? state.matOpen[step] : !mine.length;
+    var box = el('details', { class: 'panel stepmat', open: open || null }, [
+      el('summary', { text: '🎧 打ち合わせの録音を入れる' + (mine.length ? '（このタブで入れた材料 ' + mine.length + '本）' : '') }),
+      el('p', { class: 'sub', text: 'この段の打ち合わせの録音を入れます。文字にし終わると、下の「使う材料」に最初からチェックが入ります。そのまま「Gemini で' + (state.c.steps[step].content ? '直す' : '作る') + '」を押すと、方針' + (step === 's3' ? 'とヒアリングの回答欄' : '') + 'に反映します。' }),
+      mine.length ? materialList(mine) : null,
+      addMaterialForm({ step: step, kind: 'audio', title: '録音・材料を入れる' }),
+    ]);
+    box.addEventListener('toggle', function () { state.matOpen[step] = box.open; });
+    return box;
+  }
+
+  /** このタブで入れ、この段にまだ使っていない材料（「使う材料」に最初からチェックを入れる） */
+  function freshFor(step, m) {
+    var s = state.c.steps[step];
+    return m.step === step && (!s.updated || String(m.doneAt || m.created || '') > String(s.updated));
+  }
 
   /** ヒアリング項目の表（区分ごと。問い・回答・【要確認】・出どころ） */
   function hearingTable(items) {
@@ -918,7 +946,7 @@
     var s = c.steps[step];
     var mats = (c.materials || []).concat(c.companySurveys || []).filter(function (m) { return m.status === 'done'; });
     var picks = mats.map(function (m) {
-      return el('label', {}, [el('input', { type: 'checkbox', value: m.id, class: 'matpick-box' }), ' ' + KIND_LABEL[m.kind] + '：' + m.name]);
+      return el('label', {}, [el('input', { type: 'checkbox', value: m.id, class: 'matpick-box', checked: freshFor(step, m) }), ' ' + KIND_LABEL[m.kind] + '：' + m.name]);
     });
     var instruction = el('textarea', { id: 'instruction', rows: '2', placeholder: s.content ? '直しの指示（例：目的の数字を月20時間に直して）。空なら選んだ材料で直す' : '作るときの注意（任意）' });
     var mode = s.content ? 'revise' : 'make';
@@ -931,7 +959,7 @@
     var okLabel = step === 's5' ? 'OKしてmdに保存' : 'OKして次へ';
     var compose = el('div', { class: 'panel' }, [
       el('h3', { text: s.content ? '材料・指示で直す' : '材料から作る' }),
-      mats.length ? el('div', { class: 'matpick' }, [el('span', { class: 'sub', text: '使う材料：' })].concat(picks)) : el('div', { class: 'sub', text: '材料がありません（「材料」タブで入れる）' }),
+      mats.length ? el('div', { class: 'matpick' }, [el('span', { class: 'sub', text: '使う材料：' })].concat(picks)) : el('div', { class: 'sub', text: '材料がありません（' + (step === 's5' ? '「会社・要件」のタブ' : '上の「打ち合わせの録音を入れる」か、「会社・要件」のタブ') + 'で入れる）' }),
       el('div', { class: 'row' }, [instruction]),
       el('div', { class: 'row' }, [el('button', { class: 'small proof', 'data-target': 'instruction', text: '誤変換を確かめる' })]),
       el('p', { class: 'sub', text: '外では「Gemini」（30秒〜1分）、家では「デスクに頼む」（家のPCの Claude Code が作る）を選びます。' }),
