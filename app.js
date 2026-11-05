@@ -1154,9 +1154,18 @@
 
     var content = null, hearing = null;
     if (s.content) {
-      content = step === 's3' ? policyDoc(s.content) : step === 's4' ? strategyDoc(s.content)
-        : el('textarea', { id: 'step-content', class: 'doc', value: s.content, oninput: function () { state.dirty = true; } });
-      if (step !== 's4') parts.push(el('h3', { text: step === 's5' ? '分析' : '目的・課題' }));
+      content = step === 's3' ? policyDoc(s.content) : step === 's4' ? strategyDoc(s.content) : slideDoc(s.content);
+      if (step === 's3') parts.push(el('h3', { text: '目的・課題' }));
+      if (step === 's5') {
+        // 分析はスライドの形で出し、パワポ（pptx）に書き出せる（2026-11-05 久夫さん指示）
+        parts.push(el('div', { class: 'row' }, [
+          el('h3', { text: '分析（スライド）' }),
+          el('button', { class: 'small primary', text: 'パワポ（pptx）を書き出す', onclick: function () {
+            if (state.dirty) { alert('先に「保存」を押してください（パワポは保存した分析から作ります）'); return; }
+            exportPptx(s.content);
+          } }),
+        ]));
+      }
       parts.push(content);
       if (step === 's3') {
         parts.push(el('h3', { text: 'ヒアリング項目と回答' }));
@@ -1304,6 +1313,180 @@
     return box;
   }
 
+  /**
+   * 分析のタブ（2026-11-05 久夫さん指示）。「## 」の節を1枚ずつのスライドとして出す。表は表で、「### 」は小見出しで見せ、
+   * 「このスライドを手で直す」で元の文章の欄を開く。保存は欄を本文の順（data-ord）につなぐ（policyText）
+   */
+  function splitChapters(text) {
+    var out = [], cur = null;
+    String(text || '').split('\n').forEach(function (line) {
+      if (!cur || /^##\s/.test(line)) { cur = { lines: [] }; out.push(cur); }
+      cur.lines.push(line);
+    });
+    return out.filter(function (ch, i) { return i > 0 || ch.lines.join('').trim() || out.length === 1; });
+  }
+
+  function slideDoc(text) {
+    var box = el('div', { id: 'step-doc', class: 'slides' });
+    var chs = splitChapters(text);
+    chs.forEach(function (ch, i) {
+      var title = chapterTitle(ch) || '前書き';
+      var area = el('textarea', { class: 'doc part', value: ch.lines.join('\n'), oninput: function () { state.dirty = true; draw(); } });
+      area.dataset.kind = 'main';
+      area.dataset.ord = String(i);
+      area.hidden = true;
+      var view = el('div', { class: 'mdview' });
+      var draw = function () { view.replaceChildren.apply(view, mdBlocks(area.value)); };
+      draw();
+      var btn = el('button', { type: 'button', class: 'small hosoku-btn', text: 'このスライドを手で直す' });
+      btn.addEventListener('click', function () {
+        area.hidden = !area.hidden;
+        btn.textContent = area.hidden ? 'このスライドを手で直す' : '手で直す欄を閉じる';
+        if (!area.hidden) autosize(area);
+      });
+      box.appendChild(el('section', { class: 'slide' }, [
+        el('div', { class: 'slide-head' }, [el('span', { class: 'slide-title', text: title }), el('span', { class: 'slide-no', text: (i + 1) + ' / ' + chs.length })]),
+        el('div', { class: 'slide-body' }, [view]),
+        el('div', { class: 'hosoku' }, [btn, area]),
+      ]));
+    });
+    return box;
+  }
+
+  function chapterTitleOf(lines) {
+    var h = lines.filter(function (l) { return /^##\s/.test(l); })[0];
+    return h ? h.replace(/^##\s*/, '') : '';
+  }
+
+  /** 表の行（「|」で始まる行）をセルの配列に */
+  function mdCells(l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (x) { return x.trim().replace(/\*\*/g, '').replace(/<br\s*\/?>/gi, '\n'); }); }
+
+  /** 文章を、見出し（### ）・表・それ以外の文に分ける（スライドとパワポで同じ分け方を使う） */
+  function mdParts(text) {
+    var out = [], buf = [], rows = [];
+    var flushText = function () { var t = buf.join('\n').replace(/^\s+|\s+$/g, ''); if (t) out.push({ type: 'text', text: t.replace(/\*\*/g, '') }); buf = []; };
+    var flushTable = function () {
+      if (!rows.length) return;
+      var body = rows.slice(1).filter(function (l) { return !/^\s*\|?\s*:?-{2,}/.test(l); });
+      out.push({ type: 'table', head: mdCells(rows[0]), rows: body.map(mdCells) });
+      rows = [];
+    };
+    String(text || '').split('\n').forEach(function (l) {
+      if (/^##\s/.test(l)) return;
+      if (/^###\s/.test(l)) { flushTable(); flushText(); out.push({ type: 'h', text: l.replace(/^#+\s*/, '') }); return; }
+      if (/^\s*\|/.test(l)) { flushText(); rows.push(l); } else { flushTable(); buf.push(l); }
+    });
+    flushTable(); flushText();
+    return out;
+  }
+
+  /** パワポ（pptx）を書き出す。PptxGenJS は押したときだけ読み込む（ふだんの画面を重くしないため） */
+  var PPTX_LIB = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
+  function loadScript(src) {
+    return new Promise(function (resolve, reject) {
+      if (window.PptxGenJS) { resolve(); return; }
+      var sc = document.createElement('script');
+      sc.src = src; sc.onload = function () { resolve(); }; sc.onerror = function () { reject(new Error('パワポを作る部品を読み込めませんでした。電波のよい所でもう一度押してください')); };
+      document.head.appendChild(sc);
+    });
+  }
+
+  function buildPptx(text) {
+    var ORANGE = 'E7741D', INK = '222222', FONT = 'Meiryo';
+    var pptx = new window.PptxGenJS();
+    pptx.layout = 'LAYOUT_WIDE';   // 13.33 × 7.5 インチ
+    var W = 13.33, X = 0.5, CW = W - 1.0, TOP = 1.25, BOTTOM = 7.0;
+    var today = new Date();
+    var ymd = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+    // 表紙（分析のファイルには会社名を書かない決まりのため、表紙にも会社名は入れない）
+    var cover = pptx.addSlide();
+    cover.background = { color: 'FFFFFF' };
+    cover.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: 0.25, fill: { color: ORANGE }, line: { color: ORANGE } });
+    cover.addText('DX要件分析', { x: X, y: 2.6, w: CW, h: 1.0, fontFace: FONT, fontSize: 40, bold: true, color: INK });
+    cover.addText(ymd + '　初回面談の前の仮説', { x: X, y: 3.7, w: CW, h: 0.6, fontFace: FONT, fontSize: 18, color: '666666' });
+    var newSlide = function (title, cont) {
+      var sl = pptx.addSlide();
+      sl.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: 0.95, fill: { color: ORANGE }, line: { color: ORANGE } });
+      sl.addText(title + (cont ? '（続き）' : ''), { x: X, y: 0.12, w: CW, h: 0.7, fontFace: FONT, fontSize: 24, bold: true, color: 'FFFFFF' });
+      return sl;
+    };
+    // 1行の高さ（インチ）と、1行に入る全角の文字数のおおよそ（14pt・幅12.3インチ）
+    var LH = 0.3, PER_LINE = 60;
+    var linesOf = function (t) { return t.split('\n').reduce(function (n, l) { return n + Math.max(1, Math.ceil(l.length / PER_LINE)); }, 0); };
+    splitChapters(text).forEach(function (ch) {
+      var title = chapterTitleOf(ch.lines);
+      if (!title) return;
+      var sl = newSlide(title, false), y = TOP;
+      // 高さ h の物を置く前に、入らなければ新しいスライド（「続き」）に移る
+      var room = function (h) { if (!sl || y + h > BOTTOM) { sl = newSlide(title, true); y = TOP; } };
+      mdParts(ch.lines.join('\n')).forEach(function (p) {
+        if (p.type === 'h') {
+          room(0.9);   // 見出しだけがスライドの最後に残らないよう、次の1〜2行分も見込む
+          sl.addText(p.text, { x: X, y: y, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: ORANGE });
+          y += 0.48;
+        } else if (p.type === 'text') {
+          // 長い文は、スライドに収まる行数ずつに分ける
+          var chunk = [];
+          var hOf = function (ls) { return linesOf(ls.join('\n')) * LH + 0.1; };
+          var flush = function () {
+            if (!chunk.length) return;
+            var h = hOf(chunk);
+            room(h);
+            sl.addText(chunk.join('\n'), { x: X, y: y, w: CW, h: h, fontFace: FONT, fontSize: 14, color: INK, valign: 'top' });
+            y += h + 0.1;
+            chunk = [];
+          };
+          p.text.split('\n').forEach(function (l) {
+            if (sl && y + hOf(chunk.concat([l])) > BOTTOM) {
+              flush();                                   // 今のスライドに入る分を置く
+              if (y + hOf([l]) > BOTTOM) { sl = newSlide(title, true); y = TOP; }   // 次の行からは新しいスライド
+            }
+            chunk.push(l);
+          });
+          flush();
+        } else if (p.type === 'table') {
+          var n = p.head.length, fs = n >= 5 ? 10 : 12;
+          var rows = [p.head.map(function (h) { return { text: h, options: { bold: true, color: 'FFFFFF', fill: { color: ORANGE } } }; })]
+            .concat(p.rows.map(function (r) { return p.head.map(function (_, i) { return { text: r[i] || '' }; }); }));
+          // 文の長い列を広くする
+          var len = p.head.map(function (h, i) { return Math.max(4, Math.min(60, p.rows.reduce(function (m, r) { return Math.max(m, String(r[i] || '').length); }, h.length))); });
+          var sum = len.reduce(function (a, b) { return a + b; }, 0);
+          var colW = len.map(function (v) { return CW * v / sum; });
+          // 表の高さの見積もり（全角1文字＝文字の大きさの幅として、列ごとの行数から出す）
+          var rowH = function (cells) {
+            var lines = cells.reduce(function (m, c, i) {
+              var cpl = Math.max(1, Math.floor(colW[i] * 72 / fs) - 1);
+              var nl = String(c.text || '').split('\n').reduce(function (a, s) { return a + Math.max(1, Math.ceil(s.length / cpl)); }, 0);
+              return Math.max(m, nl);
+            }, 1);
+            return lines * fs * 1.3 / 72 + 0.12;
+          };
+          var est = rows.reduce(function (a, r) { return a + rowH(r); }, 0);
+          if (y > TOP + 0.01 && y + Math.min(est, 1.5) > BOTTOM) { sl = newSlide(title, true); y = TOP; }
+          var fits = y + est <= BOTTOM;
+          sl.addTable(rows, { x: X, y: y, w: CW, colW: colW, fontFace: FONT, fontSize: fs, color: INK, border: { type: 'solid', pt: 0.5, color: 'BBBBBB' },
+            valign: 'top', autoPage: !fits, autoPageRepeatHeader: true, autoPageSlideStartY: TOP, newSlideStartY: TOP });
+          if (fits) y += est + 0.15;
+          else { sl = null; y = BOTTOM + 1; }   // 表が次のスライドへ続いたときは、表の後を新しいスライドから続ける
+        }
+      });
+    });
+    return pptx;
+  }
+
+  function exportPptx(text) {
+    busy('パワポを作っています…');
+    loadScript(PPTX_LIB).then(function () {
+      var d = new Date();
+      var name = 'DX要件分析_' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2) + '.pptx';
+      return buildPptx(text).writeFile({ fileName: name }).then(function () {
+        idle();
+        msg('case-msg', 'パワポを書き出しました（' + name + '）。ダウンロードの場所を見てください', 'ok');
+      });
+    }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
+  }
+  window.DXY_buildPptx = function (text) { return loadScript(PPTX_LIB).then(function () { return buildPptx(text); }); };   // 動作確認用
+
   /** 対策の節の要点：表は表で見せ、「手で直す」で元の文章の欄を開く */
   function tablePart(seg) {
     var area = segPart(seg, '');
@@ -1323,27 +1506,16 @@
 
   /** 文章を、表（「|」で始まる行）とそれ以外に分けて見せる。「## 」の見出しの行は出さない（カードの見出しで足りる） */
   function mdBlocks(text) {
-    var out = [], buf = [], rows = [];
-    var cells = function (l) { return l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(function (x) { return x.trim().replace(/\*\*/g, ''); }); };
-    var flushText = function () { var t = buf.join('\n').trim(); if (t) out.push(el('div', { class: 'readonly', text: t })); buf = []; };
-    var flushTable = function () {
-      if (!rows.length) return;
-      var head = cells(rows[0]);
-      var body = rows.slice(1).filter(function (l) { return !/^\s*\|?\s*:?-{2,}/.test(l); });
-      var table = el('table', { class: 'strat' }, [el('tr', {}, head.map(function (h) { return el('th', { text: h }); }))]);
-      body.forEach(function (l) {
-        // セルの中の <br> は改行として見せる（対策概要の「対策例」と「Todo」を分けるため）
-        table.appendChild(el('tr', {}, cells(l).map(function (v, i) { return el('td', { text: v.replace(/<br\s*\/?>/gi, '\n'), 'data-label': head[i] || '' }); })));
+    // 分け方は mdParts と同じ（スライドの画面とパワポで見え方をそろえる）。セルの中の <br> は改行として見せる
+    return mdParts(text).map(function (p) {
+      if (p.type === 'h') return el('h4', { class: 'md-h', text: p.text });
+      if (p.type === 'text') return el('div', { class: 'readonly', text: p.text });
+      var table = el('table', { class: 'strat' }, [el('tr', {}, p.head.map(function (h) { return el('th', { text: h }); }))]);
+      p.rows.forEach(function (r) {
+        table.appendChild(el('tr', {}, p.head.map(function (h, i) { return el('td', { text: r[i] || '', 'data-label': h }); })));
       });
-      out.push(table);
-      rows = [];
-    };
-    String(text || '').split('\n').forEach(function (l) {
-      if (/^##\s/.test(l)) return;
-      if (/^\s*\|/.test(l)) { flushText(); rows.push(l); } else { flushTable(); buf.push(l); }
+      return table;
     });
-    flushTable(); flushText();
-    return out;
   }
 
   /** 分けた欄を元の本文につなぎ直す（欄の並びが本文の順と違うときも、data-ord の順に戻す） */
