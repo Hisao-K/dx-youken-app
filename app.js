@@ -456,13 +456,15 @@
   function renderMaterials() {
     var c = state.c;
     var box = $('tab-mat');
-    var list = el('div', { class: 'list' }, (c.materials || []).map(function (m) {
+    var all = (c.materials || []).concat(c.companySurveys || []);
+    var list = el('div', { class: 'list' }, all.map(function (m) {
       var st = MAT_STATUS[m.status] || ['不明', 'st-wait'];
       var ir = m.importResult;
       return el('div', { class: 'mat' }, [
         el('div', { class: 'head' }, [
           el('span', { class: 'badge ' + st[1], text: st[0] }),
           el('span', { class: 'badge st-wait', text: KIND_LABEL[m.kind] || m.kind }),
+          m.company ? el('span', { class: 'badge st-run', text: '同じ会社のほかの案件で入れたもの' }) : null,
           el('span', { class: 'name', text: m.name }),
         ]),
         el('div', { class: 'sub', text: [m.date, m.chars ? m.chars.toLocaleString() + '字' : '', m.durationSec ? Math.round(m.durationSec / 60) + '分の録音' : '', m.progress].filter(String).join('｜') }),
@@ -480,7 +482,7 @@
             if (!confirm('回答が入っている欄も、この質問票の回答で上書きしますか？')) return;
             call('reimportSurvey', { caseId: c.id, materialId: m.id, overwrite: true }, '受け付けています…', 'case-msg').then(function (r) { after(r, '取り込み直しを受け付けました'); });
           } }) : null,
-          el('button', { class: 'small', text: '外す', onclick: function () {
+          m.company ? null : el('button', { class: 'small', text: '外す', onclick: function () {
             if (!confirm('「' + m.name + '」を材料から外しますか？（ファイルはゴミ箱へ移します）')) return;
             call('removeMaterial', { caseId: c.id, materialId: m.id }, '外しています…', 'case-msg').then(function (r) { after(r, '外しました'); });
           } }),
@@ -488,8 +490,8 @@
       ]);
     }));
     put(box, [
-      el('p', { class: 'sub', text: '方針を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。どの段からでも、選んで使えます。' }),
-      (c.materials || []).length ? list : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
+      el('p', { class: 'sub', text: '方針を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。どの段からでも、選んで使えます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
+      all.length ? list : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
       addMaterialForm(),
     ]);
   }
@@ -874,7 +876,7 @@
   function actionBar(step, content) {
     var c = state.c;
     var s = c.steps[step];
-    var mats = (c.materials || []).filter(function (m) { return m.status === 'done'; });
+    var mats = (c.materials || []).concat(c.companySurveys || []).filter(function (m) { return m.status === 'done'; });
     var picks = mats.map(function (m) {
       return el('label', {}, [el('input', { type: 'checkbox', value: m.id, class: 'matpick-box' }), ' ' + KIND_LABEL[m.kind] + '：' + m.name]);
     });
