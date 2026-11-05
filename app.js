@@ -1110,7 +1110,7 @@
     if (s.deskPending) line.push(el('span', { class: 'badge st-wait', text: 'デスクに依頼中（家のPCで「依頼を片づけて」）' }));
     if (s.content && s.review === 'needed') line.push(el('span', { class: 'badge st-run', text: 'デスクのレビュー前' }));
     if (s.stale) line.push(el('span', { class: 'badge st-err', text: '前の段か登録内容が変わった' }));
-    if (s.proposal) line.push(el('span', { class: 'badge st-run', text: s.proposal.status === 'ready' ? '反映前の案あり' : s.proposal.status === 'error' ? '案を作れなかった' : '材料を反映した案を作っています' }));
+    if (s.proposal) line.push(el('span', { class: 'badge st-run', text: s.proposal.status === 'ready' ? '反映前の案あり' : s.proposal.status === 'error' ? '案を作れなかった' : s.proposal.remake ? '作り直した案を作っています' : '材料を反映した案を作っています' }));
     if (line.length) out.push(el('div', {}, line));
     if (s.fallbackModel) out.push(el('div', { class: 'warn', text: '設定のモデルが使えないため、' + s.fallbackModel + ' で作りました。' }));
     if (s.error) out.push(el('div', { class: 'errbox', text: s.error }));
@@ -1249,14 +1249,14 @@
     var c = state.c;
     var s = c.steps[step];
     var p = s.proposal;
-    var names = '「' + (p.names || []).join('」「') + '」';
+    var names = p.remake ? '今の材料で作り直' : '「' + (p.names || []).join('」「') + '」を反映';   // 「〜した案」の前の言葉
     var discard = el('button', { class: 'small', text: p.status === 'ready' ? '反映しない' : '案を消す', onclick: function () {
       if (!confirm(p.status === 'ready' ? 'この案を反映せずに消しますか？（今の内容はそのままです）' : '作っている案を消しますか？')) return;
       call('discardProposal', { caseId: c.id, step: step }, '消しています…', 'case-msg').then(function (r) { after(r, '案を消しました。今の内容はそのままです'); });
     } });
     if (p.status === 'making') {
       return el('div', { class: 'panel proposal' }, [
-        el('h3', { text: names + 'を反映した案を作っています' }),
+        el('h3', { text: names + 'した案を作っています' }),
         el('p', { class: 'sub', text: '1〜2分かかります（裏で進みます）。できると、ここに今の内容との違いが出ます。' }),
         p.error ? el('div', { class: 'warn', text: p.error }) : null,
         el('div', { class: 'row' }, [discard]),
@@ -1264,9 +1264,9 @@
     }
     if (p.status === 'error') {
       return el('div', { class: 'panel proposal' }, [
-        el('h3', { text: names + 'を反映した案を作れませんでした' }),
+        el('h3', { text: names + 'した案を作れませんでした' }),
         el('div', { class: 'errbox', text: p.error || '' }),
-        el('p', { class: 'sub', text: '今の内容はそのままです。案を消してから、材料を入れ直してください。' }),
+        el('p', { class: 'sub', text: p.remake ? '今の内容はそのままです。案を消してから、もう一度「Gemini で作り直す」を押してください。' : '今の内容はそのままです。案を消してから、材料を入れ直してください。' }),
         el('div', { class: 'row' }, [discard]),
       ]);
     }
@@ -1279,8 +1279,10 @@
       call('applyProposal', { caseId: c.id, step: step }, '反映しています…', 'case-msg').then(function (r) { after(r, '反映しました。前の内容は「取り込む前の版」に残っています'); });
     } });
     return el('div', { class: 'panel proposal' }, [
-      el('h3', { text: names + 'を反映した案ができました' }),
-      el('p', { class: 'sub', text: '今の内容から、次のように変わります。打ち合わせで前提が変わっていないか確かめ、よければ「反映する」を押してください。押すまで、今の内容は変わりません。' }),
+      el('h3', { text: names + 'した案ができました' }),
+      el('p', { class: 'sub', text: p.remake
+        ? '今の内容から、次のように変わります。手で直した所や、残したい書き方が消えていないか確かめ、よければ「反映する」を押してください。押すまで、今の内容は変わりません。'
+        : '今の内容から、次のように変わります。打ち合わせで前提が変わっていないか確かめ、よければ「反映する」を押してください。押すまで、今の内容は変わりません。' }),
       changed ? el('div', { class: 'warn', text: 'この案を作った後に、手で直した内容があります。反映すると、その直しは消えます。' }) : null,
       el('h4', { text: STEP_TAB[step].replace('・ヒアリング', '') + 'の文章' }),
       diff,
@@ -1468,6 +1470,18 @@
           call('runStep', { caseId: c.id, step: step, mode: 'make', instruction: '', materialIds: [] }, '受け付けています…', 'case-msg')
             .then(function (r) { after(r, '受け付けました。Gemini が作っています（30秒〜1分ほど。裏で進みます）'); });
         } }),
+        // 中身がある段を、今の材料をすべて使って今の型で作り直す（2026-11-05 久夫さん指示）。案は違いを見て「反映する」を押したときだけ入る
+        s.content ? el('button', { class: 'small', text: 'Gemini で作り直す', disabled: !!s.running || !!(s.proposal && s.proposal.status === 'making'), onclick: function () {
+          var msgText = '入れた材料（文字になったもの）をすべて使って、今の型で作り直した案を作ります（1〜2分）。\n' +
+            '案ができたら、今の内容との違いを見て「反映する」を押したときだけ入ります。手で直した所も、案では変わることがあります。' +
+            (s.proposal ? '\n反映していない今の案は、この案に置き換わります。' : '') + '\n作り直しますか？';
+          if (!confirm(msgText)) return;
+          saveFirst().then(function (okSaved) {
+            if (!okSaved) return;
+            call('remakeProposal', { caseId: c.id, step: step }, '受け付けています…', 'case-msg')
+              .then(function (r) { after(r, '受け付けました。作り直した案を作っています（1〜2分。裏で進みます）。できると、この画面の上に今の内容との違いが出ます'); });
+          });
+        } }) : null,
         el('button', { class: 'small', text: s.content ? 'デスクにレビューを頼む' : 'デスクに頼む', onclick: function () {
           saveFirst().then(function (okSaved) {
             if (!okSaved) return;
@@ -1480,7 +1494,7 @@
           call('edit', editBody(step), '保存しています…', 'case-msg').then(function (r) { after(r, '保存しました'); });
         } }) : null,
         s.content ? el('button', { class: 'small primary', text: okLabel, onclick: function () {
-          if (s.proposal && s.proposal.status === 'ready' && !confirm('材料を反映した案が、まだ反映も取り消しもされていません。案を反映しないまま OK にしますか？')) return;
+          if (s.proposal && s.proposal.status === 'ready' && !confirm((s.proposal.remake ? '作り直した案' : '材料を反映した案') + 'が、まだ反映も取り消しもされていません。案を反映しないまま OK にしますか？')) return;
           if (s.review === 'needed' && !confirm('この段は「デスクのレビュー前」です。お客様に出す前にデスクのレビューを受けてください。このまま OK にしますか？')) return;
           var body = editBody(step);
           call('ok', body, 'OK にして md に書き出しています…', 'case-msg').then(function (r) {
