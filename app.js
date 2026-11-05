@@ -547,8 +547,8 @@
       el('button', { type: 'button', class: 'primary wide', text: 'この文を入れる', onclick: addText }),
     ]);
     var driveBox = el('div', {}, [
-      el('label', { class: 'field' }, ['Google フォームの回答のスプレッドシートの URL', driveUrl]),
-      el('p', { class: 'sub', text: 'kamozaki0413@kamobase.com で開けるファイルにしてください。' }),
+      el('label', { class: 'field' }, ['Google フォームの URL（フォームそのもの、または回答のスプレッドシート）', driveUrl]),
+      el('p', { class: 'sub', text: 'すべての回答を文にして入れ、いちばん新しい回答は問いの文が同じ回答欄にも入れます。フォームは kamozaki0413@kamobase.com が編集者のものにしてください。' }),
       el('button', { type: 'button', class: 'primary wide', text: 'このファイルを入れる', onclick: addDrive }),
     ]);
     var pick = el('button', { type: 'button', class: 'wide', text: 'ファイルを選ぶ', onclick: function () { if (!state.uploading) { fileInput.value = ''; fileInput.click(); } } });
