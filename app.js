@@ -1253,6 +1253,16 @@
           } }),
         ]));
       }
+      if (step === 's4') {
+        // 方針0〜5を打ち合わせ用の資料にして PDF に出す（2026-11-06 久夫さん指示）
+        parts.push(el('div', { class: 'row' }, [
+          el('button', { class: 'small primary', text: 'PDFに出力（方針0〜5）', onclick: function () {
+            if (state.dirty) { alert('先に「保存」を押してください（PDFは保存した対策から作ります）'); return; }
+            exportPdf(s.content);
+          } }),
+          el('span', { class: 'sub', text: '印刷の画面が開きます。送り先を「PDFに保存」にしてください' }),
+        ]));
+      }
       parts.push(content);
       if (step === 's3') {
         parts.push(el('h3', { text: 'ヒアリング項目と回答' }));
@@ -1578,6 +1588,150 @@
     }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
   }
   window.DXY_buildPptx = function (text) { return loadScript(PPTX_LIB).then(function () { return buildPptx(text); }); };   // 動作確認用
+
+  /**
+   * 対策タブの「PDFに出力」（2026-11-06 久夫さん指示）。方針0〜5を、打ち合わせで見ながら話せる A4 縦の資料に組み、
+   * ブラウザの印刷の画面を開く（送り先で「PDFに保存」を選ぶ）。日本語の文字をきれいに出すため、PDF を作る部品は使わない。
+   * 付（初回面談で確かめること）は入れない。会社名は入れない（方針・分析のファイルに会社名を書かない決まりと同じ）。
+   * 本文は innerHTML を使わずに組む（Gemini・デスクが書いた文をそのまま文字として出す）。
+   */
+  var PRINT_NOS = ['0', '1', '2', '3', '4', '5'];
+  var PRINT_BREAK = { '2': true, '3': true, '4': true };   // この節は新しいページから始める
+
+  /** 文の中の **太字** と【仮定】【要確認】などの印を見分けて並べる */
+  function printInline(text) {
+    var out = [];
+    String(text || '').split(/(\*\*[^*]+\*\*|【[^】]{1,12}】)/).forEach(function (t) {
+      if (!t) return;
+      var m = t.match(/^\*\*([^*]+)\*\*$/);
+      if (m) out.push(el('strong', { text: m[1] }));
+      else if (/^【[^】]+】$/.test(t)) out.push(el('span', { class: 'pr-tag' + (/仮定/.test(t) ? ' pr-kari' : /要確認/.test(t) ? ' pr-yo' : ''), text: t }));
+      else out.push(document.createTextNode(t));
+    });
+    return out;
+  }
+
+  /** 表（「|」で始まる行の並び）。短い値だけの列（課題番号・規模・優先度）は細くし、優先度は色の印にする */
+  function printTable(rows) {
+    var head = mdCells(rows[0]);
+    var body = rows.slice(1).filter(function (l) { return !/^\s*\|?\s*:?-{2,}/.test(l); }).map(mdCells);
+    var narrow = head.map(function (h, i) { return body.length > 0 && body.every(function (r) { return String(r[i] || '').length <= 6; }); });
+    // いちばん文の長い列（対策概要）以外の列は、細くなりすぎないよう幅を決めておく（課題概略が数文字ずつ折り返さないように）
+    var total = head.map(function (h, i) { return body.reduce(function (n, r) { return n + String(r[i] || '').length; }, 0); });
+    var widest = total.indexOf(Math.max.apply(null, total));
+    var cls = function (i) { return narrow[i] ? 'pr-narrow' : i !== widest ? 'pr-mid' : null; };
+    var tbody = el('tbody');
+    body.forEach(function (r) {
+      tbody.appendChild(el('tr', {}, head.map(function (h, i) {
+        var v = String(r[i] || '');
+        var td = el('td', { class: cls(i) });
+        if (/優先/.test(h) && /^(高|中|低)$/.test(v)) {
+          td.appendChild(el('span', { class: 'pr-prio pr-prio-' + { 高: 'h', 中: 'm', 低: 'l' }[v], text: v }));
+        } else {
+          v.split('\n').forEach(function (line) {
+            // 「対策例：」「事例からの案：」「Todo：」のような行の頭の名前は太字にする
+            var m = line.match(/^([^：。、\s]{1,8})：([\s\S]*)$/);
+            td.appendChild(el('div', { class: 'pr-cell-line' }, m ? [el('strong', { text: m[1] + '：' })].concat(printInline(m[2])) : printInline(line)));
+          });
+        }
+        return td;
+      })));
+    });
+    return el('table', { class: 'pr-table' }, [
+      el('thead', {}, [el('tr', {}, head.map(function (h, i) { return el('th', { class: cls(i), text: h }); }))]),
+      tbody,
+    ]);
+  }
+
+  /** 節の本文（「## 」の行を除く）を、小見出し・箇条書き（入れ子）・表・段落に組む */
+  function printBlocks(lines) {
+    var out = [], stack = [], i = 0;
+    while (i < lines.length) {
+      var l = lines[i];
+      if (/^\s*$/.test(l)) { stack = []; i++; continue; }
+      var h = l.match(/^(#{3,6})\s+(.*)$/);
+      if (h) { stack = []; out.push(el(h[1].length === 3 ? 'h3' : 'h4', { class: h[1].length === 3 ? 'pr-h3' : 'pr-h4' }, printInline(h[2]))); i++; continue; }
+      if (/^\s*\|/.test(l)) {
+        stack = [];
+        var rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) { rows.push(lines[i]); i++; }
+        out.push(printTable(rows));
+        continue;
+      }
+      var li = l.match(/^(\s*)(?:[-*・]|(\d+)[.．])\s+(.*)$/);
+      if (li) {
+        var indent = li[1].replace(/\t/g, '  ').length;
+        while (stack.length && stack[stack.length - 1].indent > indent) stack.pop();
+        var top = stack[stack.length - 1];
+        if (!top || top.indent < indent) {
+          var list = el(li[2] ? 'ol' : 'ul', { class: 'pr-list' });
+          if (top) (top.node.lastElementChild || top.node).appendChild(list); else out.push(list);
+          top = { indent: indent, node: list };
+          stack.push(top);
+        }
+        var item = el('li', {}, printInline(li[3]));
+        if (li[2]) item.value = Number(li[2]);
+        top.node.appendChild(item);
+        i++;
+        continue;
+      }
+      stack = [];
+      out.push(el('p', { class: 'pr-p' }, printInline(l)));
+      i++;
+    }
+    return out;
+  }
+
+  /** 方針0〜5の節だけを取り出す（付・ほかの節は入れない） */
+  function printSections(text) {
+    return splitChapters(String(text || '').replace(/\r/g, '')).map(function (ch) {
+      var title = chapterTitleOf(ch.lines);
+      var m = title.match(/^(\d+)\s*[.．]\s*(.*)$/);
+      return m && PRINT_NOS.indexOf(m[1]) >= 0 ? { no: m[1], name: m[2], lines: ch.lines.filter(function (l) { return !/^##\s/.test(l); }) } : null;
+    }).filter(Boolean);
+  }
+
+  function buildPrintDoc(text) {
+    var secs = printSections(text);
+    var d = new Date();
+    var date = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    var root = el('div', { id: 'print-root', class: 'pr' }, [
+      el('header', { class: 'pr-cover' }, [
+        el('div', { class: 'pr-kicker', text: 'DX要件定義　打ち合わせ資料' }),
+        el('h1', { class: 'pr-title', text: '目的・課題と対策' }),
+        el('div', { class: 'pr-meta' }, [date + '　　'].concat(printInline('【仮定】【要確認】の印がある所は、まだ確かめていない点です'))),
+        el('ol', { class: 'pr-toc' }, secs.map(function (s) { return el('li', {}, [el('span', { class: 'pr-toc-no', text: s.no }), s.name]); })),
+      ]),
+    ]);
+    secs.forEach(function (s) {
+      root.appendChild(el('section', { class: 'pr-sec' + (PRINT_BREAK[s.no] ? ' pr-break' : '') }, [
+        el('h2', { class: 'pr-h2' }, [el('span', { class: 'pr-no', text: s.no }), el('span', { text: s.name })]),
+      ].concat(printBlocks(s.lines))));
+    });
+    return root;
+  }
+
+  function exportPdf(text) {
+    if (!printSections(text).length) { msg('case-msg', '方針0〜5の見出し（「## 0. 要望事項」など）が見つからないため、PDFを作れませんでした', 'err'); return; }
+    var old = $('print-root');
+    if (old) old.remove();
+    var root = buildPrintDoc(text);
+    document.body.appendChild(root);
+    document.body.classList.add('printing');
+    var oldTitle = document.title;
+    var d = new Date();
+    document.title = 'DX要件_目的・課題と対策_' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);   // 「PDFに保存」のときのファイル名になる
+    var cleanup = function () {
+      window.removeEventListener('afterprint', cleanup);
+      document.title = oldTitle;
+      document.body.classList.remove('printing');
+      root.remove();
+    };
+    window.addEventListener('afterprint', cleanup);
+    msg('case-msg', '印刷の画面で、送り先を「PDFに保存」にして保存してください', 'ok');
+    setTimeout(function () { window.print(); }, 50);
+  }
+  window.DXY_buildPrintDoc = buildPrintDoc;   // 動作確認用
 
   /** 対策の節の要点：表は表で見せ、「手で直す」で元の文章の欄を開く */
   function tablePart(seg) {

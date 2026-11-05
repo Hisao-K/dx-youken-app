@@ -213,3 +213,68 @@ table.strat th { background: var(--panel); white-space: nowrap; }
 .formurl { word-break: break-all; }
 .row .copynote { margin: 0; min-height: 0; }
 .copybox { width: 100%; font-size: 15px; padding: 6px; }
+
+/* ---- 対策タブの「PDFに出力」（2026-11-06）。印刷のときだけ #print-root を出し、画面の部品は隠す ---- */
+#print-root { display: none; }
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 14mm 14mm 16mm;
+    @bottom-center { content: counter(page) " / " counter(pages); font-size: 8.5pt; color: #888; }
+  }
+  body.printing { background: #fff !important; padding: 0 !important; }
+  body.printing > :not(#print-root) { display: none !important; }
+  body.printing #print-root { display: block; }
+}
+.pr {
+  color: #1a1a1a; background: #fff;
+  font-family: "Hiragino Sans", "Yu Gothic", "Meiryo", "Noto Sans JP", sans-serif;
+  font-size: 10pt; line-height: 1.7;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.pr-cover { border-top: 7px solid #E7741D; padding: 8mm 0 5mm; margin-bottom: 7mm; border-bottom: 1px solid #ddd; }
+.pr-kicker { color: #c25f12; font-weight: 700; font-size: 9.5pt; letter-spacing: 0.12em; }
+.pr-title { font-size: 22pt; line-height: 1.3; margin: 1.5mm 0 3mm; border: none; padding: 0; }
+.pr-meta { color: #555; font-size: 9pt; }
+.pr-toc { list-style: none; padding: 0; margin: 4mm 0 0; display: flex; flex-wrap: wrap; gap: 1.5mm 7mm; font-size: 9.5pt; }
+.pr-toc li { display: flex; align-items: center; gap: 1.5mm; }
+.pr-toc-no { display: inline-block; min-width: 5mm; text-align: center; border-radius: 1mm; background: #FBE3CF; color: #8a4410; font-weight: 700; font-size: 8.5pt; }
+.pr-sec { margin: 0 0 8mm; }
+.pr-break { break-before: page; page-break-before: always; }
+.pr-h2 {
+  display: flex; align-items: center; gap: 3mm;
+  font-size: 15pt; line-height: 1.3; margin: 0 0 3mm; padding: 2mm 3mm;
+  background: #FDF1E7; border-left: 5px solid #E7741D;
+  break-after: avoid; page-break-after: avoid;
+}
+.pr-no { display: inline-block; min-width: 8mm; text-align: center; background: #E7741D; color: #fff; border-radius: 1.5mm; font-size: 12pt; padding: 0.4mm 1.5mm; }
+.pr-h3 {
+  font-size: 11.5pt; line-height: 1.4; margin: 5mm 0 2mm; padding: 0 0 1mm; border: none;
+  border-bottom: 1.5px solid #E7741D; break-after: avoid; page-break-after: avoid;
+}
+.pr-h4 { font-size: 10pt; margin: 3mm 0 1mm; color: #c25f12; break-after: avoid; page-break-after: avoid; }
+.pr-p { margin: 1mm 0; }
+.pr-list { margin: 1mm 0 2mm; padding-left: 5.5mm; }
+.pr-list li { margin: 0.7mm 0; break-inside: avoid; page-break-inside: avoid; }
+.pr-list li::marker { color: #E7741D; }
+.pr-list .pr-list { margin: 0.5mm 0; }
+.pr-tag {
+  display: inline-block; font-size: 7.8pt; font-weight: 700; line-height: 1.35;
+  padding: 0 1mm; margin: 0 0.5mm; border-radius: 1mm; border: 1px solid #999; color: #555; vertical-align: 1px;
+}
+.pr-kari { border-color: #2f6db5; color: #2f6db5; background: #eef4fb; }
+.pr-yo { border-color: #b42318; color: #b42318; background: #fdeeec; }
+.pr-table { width: 100%; border-collapse: collapse; font-size: 8.8pt; line-height: 1.55; margin: 2mm 0 5mm; }
+.pr-table th { background: #E7741D; color: #fff; text-align: left; padding: 1.5mm 2mm; border: 1px solid #d36a19; font-weight: 700; }
+.pr-table td { padding: 2mm; border: 1px solid #ccc; vertical-align: top; }
+.pr-table tbody tr:nth-child(even) td { background: #FBF8F5; }
+.pr-table tr { break-inside: avoid; page-break-inside: avoid; }
+.pr-table thead { display: table-header-group; }
+.pr-table .pr-narrow { white-space: nowrap; width: 1%; text-align: center; }
+.pr-cell-line + .pr-cell-line { margin-top: 1.4mm; }
+.pr-prio { display: inline-block; padding: 0.3mm 2.2mm; border-radius: 3mm; font-weight: 700; }
+.pr-prio-h { background: #E7741D; color: #fff; }
+.pr-prio-m { background: #FBE3CF; color: #8a4410; }
+.pr-prio-l { background: #eee; color: #555; }
+.pr-table .pr-mid { width: 17%; }
+.pr-table th.pr-narrow { white-space: normal; min-width: 5.6em; }
