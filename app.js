@@ -194,6 +194,7 @@
   /** 「閉じる」＝ログアウト。画面に出ている案件・入力中の文字を消してログイン画面に戻す */
   function logout() {
     if (state.uploading) { alert('ファイルを送っている途中です。送り終わってから閉じてください。'); return; }
+    if (Rec.busy()) { alert('録音中です。「■ 止める」を押してから閉じてください。'); return; }
     if (state.dirty && !confirm('保存していない直しがあります。消えますが、閉じますか？')) return;
     if (!confirm('ログアウトして閉じますか？\n次に開いたときは、ログインからになります。')) return;
     try { google.accounts.id.disableAutoSelect(); } catch (e) { /* 未読み込みでも続ける */ }
@@ -319,7 +320,9 @@
 
   $('back').addEventListener('click', function () {
     if (state.uploading) { alert('ファイルを送っている途中です。送り終わってから戻ってください。'); return; }
+    if (Rec.busy()) { alert('録音中です。「■ 止める」を押してから戻ってください。'); return; }
     if (state.dirty && !confirm('保存していない直しがあります。消えますが、一覧に戻りますか？')) return;
+    Rec.release();   // 止めてある録音は端末の中に残る。次にこの案件を開くと戻せる
     stopPoll();
     state.dirty = false;
     state.c = null;
@@ -330,7 +333,8 @@
   });
 
   window.addEventListener('beforeunload', function (e) {
-    if (!state.uploading && !state.dirty) return;
+    var unsent = Rec.current() && Rec.current().status === 'stopped';
+    if (!state.uploading && !state.dirty && !Rec.busy() && !unsent) return;
     e.preventDefault();
     e.returnValue = '';
   });
@@ -503,7 +507,7 @@
    */
   var HOWS = {
     text: [['type', '文を打つ・貼る'], ['file', 'ファイルを選ぶ']],
-    audio: [['file', '録音のファイル']],
+    audio: [['rec', 'このアプリで録音する'], ['file', '録音のファイルを選ぶ']],
     survey: [['file', 'ファイル'], ['drive', 'Google フォーム'], ['type', '文を貼る']],
   };
   var KIND_TEXT = {
@@ -519,7 +523,7 @@
    */
   var STEP_KINDS = { s3: ['audio', 'text', 'survey'], s4: ['audio', 'text'] };
   var STEP_KIND_LABEL = { text: '打ち合わせのメモ', audio: '打ち合わせの録音', survey: '追加の質問票の回答' };
-  var STEP_HOWS = { text: [['type', '文を打つ・貼る'], ['file', 'ファイルを選ぶ']], audio: [['file', '録音のファイル']], survey: [['file', 'ファイル'], ['type', '文を貼る']] };
+  var STEP_HOWS = { text: [['type', '文を打つ・貼る'], ['file', 'ファイルを選ぶ']], audio: HOWS.audio, survey: [['file', 'ファイル'], ['type', '文を貼る']] };
   var STEP_KIND_TEXT = {
     text: { name: '例：2回目の打ち合わせのメモ', date: '日付（打ち合わせの日）' },
     audio: { name: '例：ヒアリング②', date: '日付（打ち合わせの日）' },
@@ -529,12 +533,206 @@
   /** 材料の種類の呼び方（方針のタブで入れたものは、そのタブでの呼び方） */
   function kindLabel(m) { return (STEP_KINDS[m.step] && STEP_KIND_LABEL[m.kind]) || KIND_LABEL[m.kind] || m.kind; }
 
+  /** 材料を入れるタブの名前 */
+  function placeName(step) { return step === 's3' ? '方針0〜2' : step === 's4' ? '方針3〜5' : '会社・要件'; }
+
+  // =========================
+  //  このアプリで録音する（2026-11-05 久夫さん指示。会社・要件／方針0〜2／方針3〜5のどのタブでも同じ仕組み）
+  // =========================
+  /**
+   * 録音は、画面の描き直し（処理の進み具合の読み直し・タブの切り替え）で止まらないよう、入力欄の外で持つ。
+   * 録った分は10秒ごとに端末の中（IndexedDB）にも書く。送る前に画面が閉じても、次にそのタブを開くと「送っていない録音」として戻せる。
+   * 録音は、録音を始めたタブ（案件と段）の材料になる。同時に録れるのは1本だけ。
+   */
+  var Rec = (function () {
+    var MAX_SEC = 3 * 3600 - 60;   // 受け付ける長さの上限（3時間）の少し前で止める
+    var SLICE_MS = 10000;
+    var TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/ogg;codecs=opus'];
+    var r = null;        // 今の録音 { id, caseId, step, mime, status: recording|paused|stopping|stopped, accMs, since, chunks, started, sec, file, form, note }
+    var subs = [];       // { node, fn }：画面の欄。node が画面から外れたら呼ばない
+    var timer = 0;
+
+    function emit(what) {
+      subs = subs.filter(function (s) { return s.node.isConnected; });
+      subs.slice().forEach(function (s) { s.fn(what); });
+    }
+    function on(node, fn) { subs.push({ node: node, fn: fn }); }
+
+    // ---- 端末の中の保存（IndexedDB）。使えない端末では保存なしで録音だけする ----
+    var dbp = null;
+    function db() {
+      if (!dbp) dbp = new Promise(function (res, rej) {
+        var q = indexedDB.open('dxy-rec', 1);
+        q.onupgradeneeded = function () {
+          var d = q.result;
+          d.createObjectStore('recs', { keyPath: 'id' });
+          d.createObjectStore('chunks', { autoIncrement: true }).createIndex('rec', 'recId');
+        };
+        q.onsuccess = function () { res(q.result); };
+        q.onerror = function () { rej(q.error); };
+      });
+      return dbp;
+    }
+    function tx(stores, mode, fn) {
+      try {
+        return db().then(function (d) {
+          return new Promise(function (res, rej) {
+            var t = d.transaction(stores, mode);
+            var req = fn(t);
+            t.oncomplete = function () { res(req && 'result' in req ? req.result : undefined); };
+            t.onerror = t.onabort = function () { rej(t.error); };
+          });
+        });
+      } catch (e) { return Promise.reject(e); }
+    }
+    function quiet(p) { return p.catch(function () { return null; }); }
+    function saveMeta(x) {
+      return quiet(tx(['recs'], 'readwrite', function (t) {
+        return t.objectStore('recs').put({ id: x.id, caseId: x.caseId, step: x.step, mime: x.mime, started: x.started,
+                                           sec: secOf(x), done: x.status === 'stopped', form: x.form || {} });
+      }));
+    }
+    function saveChunk(x, blob) { return quiet(tx(['chunks'], 'readwrite', function (t) { return t.objectStore('chunks').add({ recId: x.id, blob: blob }); })); }
+    function removeSaved(id) {
+      return quiet(tx(['recs', 'chunks'], 'readwrite', function (t) {
+        t.objectStore('recs').delete(id);
+        t.objectStore('chunks').index('rec').openCursor(IDBKeyRange.only(id)).onsuccess = function (e) {
+          var cur = e.target.result;
+          if (cur) { cur.delete(); cur.continue(); }
+        };
+      }));
+    }
+
+    function secOf(x) { return Math.round((x.accMs + (x.status === 'recording' ? Date.now() - x.since : 0)) / 1000); }
+    function two(n) { return (n < 10 ? '0' : '') + n; }
+    function clock(sec) { return Math.floor(sec / 3600) + ':' + two(Math.floor(sec / 60) % 60) + ':' + two(sec % 60); }
+    function makeFile(blob, mime, started) {
+      var d = new Date(started);
+      var ext = /mp4/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
+      var name = '録音_' + d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + '_' + two(d.getHours()) + two(d.getMinutes()) + '.' + ext;
+      return new File([blob], name, { type: String(mime).split(';')[0] });
+    }
+
+    function start(caseId, step, form) {
+      if (r) return Promise.reject(new Error(r.status === 'stopped' ? '送っていない録音があります。送るか消してから録音してください。' : 'ほかで録音中です。'));
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+        return Promise.reject(new Error('この端末・ブラウザでは録音できません。録音アプリで録ったファイルを「録音のファイルを選ぶ」から入れてください。'));
+      }
+      var mime = TYPES.filter(function (t) { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } })[0] || '';
+      return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function (stream) {
+        var opt = { audioBitsPerSecond: 32000 };   // 3時間で約45MB（受け付ける上限 300MB に収まる）
+        if (mime) opt.mimeType = mime;
+        var mr = new MediaRecorder(stream, opt);
+        var x = r = { id: 'R' + Date.now(), caseId: caseId, step: step || '', mime: mr.mimeType || mime || 'audio/webm', status: 'recording',
+                      accMs: 0, since: Date.now(), chunks: [], started: Date.now(), form: form || {}, note: '', mr: mr, stream: stream };
+        mr.ondataavailable = function (e) {
+          if (!e.data || !e.data.size) return;
+          x.chunks.push(e.data);
+          saveChunk(x, e.data);
+          saveMeta(x);
+        };
+        mr.onstop = function () { finish(x); };
+        mr.onerror = function () { x.note = '録音が途中で止まりました。ここまでの分は残っています。'; stop(); };
+        stream.getAudioTracks().forEach(function (t) {
+          t.onended = function () { if (x.status === 'recording' || x.status === 'paused') { x.note = 'マイクが使えなくなったので、そこで止めました。ここまでの分は残っています。'; stop(); } };
+        });
+        mr.start(SLICE_MS);
+        saveMeta(x);
+        keepAwake(true);
+        timer = setInterval(function () {
+          if (x.status === 'recording' && secOf(x) >= MAX_SEC) { x.note = '3時間になったので止めました。続きは新しい録音で録ってください。'; stop(); }
+          emit('tick');
+        }, 1000);
+        emit('state');
+      });
+    }
+    function pause() {
+      if (!r || r.status !== 'recording') return;
+      r.mr.pause(); r.accMs += Date.now() - r.since; r.status = 'paused'; saveMeta(r); emit('state');
+    }
+    function resume() {
+      if (!r || r.status !== 'paused') return;
+      r.mr.resume(); r.since = Date.now(); r.status = 'recording'; saveMeta(r); emit('state');
+    }
+    function stop() {
+      if (!r || (r.status !== 'recording' && r.status !== 'paused')) return;
+      if (r.status === 'recording') r.accMs += Date.now() - r.since;
+      r.status = 'stopping';
+      emit('state');
+      try { r.mr.stop(); } catch (e) { finish(r); }
+    }
+    function finish(x) {
+      if (x.status === 'stopped') return;
+      clearInterval(timer);
+      try { x.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* 止まっていればそのまま */ }
+      x.status = 'stopped';
+      x.sec = secOf(x);
+      x.file = makeFile(new Blob(x.chunks, { type: x.mime }), x.mime, x.started);
+      x.chunks = [];
+      x.mr = x.stream = null;
+      saveMeta(x);
+      keepAwake(false);
+      emit('state');
+    }
+    /** 録音を消す（端末の中の保存も消す） */
+    function discard() {
+      if (!r) return Promise.resolve();
+      var x = r;
+      r = null;
+      clearInterval(timer);
+      try { if (x.mr && x.mr.state !== 'inactive') { x.mr.onstop = null; x.mr.stop(); } } catch (e) { /* 何もしない */ }
+      try { if (x.stream) x.stream.getTracks().forEach(function (t) { t.stop(); }); } catch (e) { /* 何もしない */ }
+      keepAwake(false);
+      return removeSaved(x.id).then(function () { emit('state'); });
+    }
+    /** 送り終えた */
+    function sent(id) { if (r && r.id === id) r = null; return removeSaved(id); }
+    /** 案件から離れるとき。止めてある録音は端末の中に残し、次に開いたときに戻せる */
+    function release() { if (r && r.status === 'stopped') r = null; }
+    /** その案件・タブの、送っていない録音（端末の中の保存） */
+    function pending(caseId, step) {
+      return quiet(tx(['recs'], 'readonly', function (t) { return t.objectStore('recs').getAll(); })).then(function (list) {
+        return (list || []).filter(function (m) { return m.caseId === caseId && m.step === (step || '') && !(r && r.id === m.id); })
+          .sort(function (a, b) { return a.started - b.started; });
+      });
+    }
+    /** 端末の中の保存から戻す */
+    function restore(meta) {
+      if (r) return Promise.reject(new Error('録音中か、ほかに送っていない録音があります。'));
+      return tx(['chunks'], 'readonly', function (t) { return t.objectStore('chunks').index('rec').getAll(IDBKeyRange.only(meta.id)); }).then(function (rows) {
+        if (!rows || !rows.length) throw new Error('この録音の中身が端末に残っていません。');
+        // 途中で閉じた録音は、最後に書いた長さより最大10秒長い（文字起こしで終わりが切れないよう、長めに見ておく）
+        var sec = (meta.sec || 0) + (meta.done ? 0 : SLICE_MS / 1000);
+        r = { id: meta.id, caseId: meta.caseId, step: meta.step, mime: meta.mime, status: 'stopped', accMs: sec * 1000, since: 0, chunks: [],
+              started: meta.started, sec: sec, form: meta.form || {}, note: meta.done ? '' : '途中で画面が閉じた録音です。最後の数秒は入っていないことがあります。',
+              file: makeFile(new Blob(rows.map(function (x) { return x.blob; }), { type: meta.mime }), meta.mime, meta.started) };
+        if (!meta.done) saveMeta(r);
+        emit('state');
+      });
+    }
+    function setForm(form) { if (r) { r.form = form; if (r.status !== 'stopping') saveMeta(r); } }
+
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible' && r && (r.status === 'recording' || r.status === 'paused')) keepAwake(true);
+    });
+
+    return {
+      on: on, start: start, pause: pause, resume: resume, stop: stop, discard: discard, sent: sent, release: release,
+      pending: pending, restore: restore, setForm: setForm, clock: clock, secOf: secOf,
+      current: function () { return r; },
+      busy: function () { return !!r && r.status !== 'stopped'; },
+      here: function (caseId, step) { return !!r && r.caseId === caseId && r.step === (step || ''); },
+    };
+  })();
+
   /** opts: { step: 入れたタブ（s3・s4。会社・要件のタブなら空）, kind: 最初に選んでおく種類, title: 見出し } */
   function addMaterialForm(opts) {
     opts = opts || {};
     var inStep = !!STEP_KINDS[opts.step];
     var hows_ = inStep ? STEP_HOWS : HOWS, texts = inStep ? STEP_KIND_TEXT : KIND_TEXT;
     var kind = opts.kind || 'text', how = hows_[kind][0][0];
+    var caseId = state.c.id, place = opts.step || '';
+    if (Rec.here(caseId, place)) { kind = 'audio'; how = 'rec'; }   // このタブで録音中・送っていない録音があるときは録音の欄を出す
     var file = null, durationSec = 0;
     var kinds = el('div', { class: 'kinds' }, (inStep ? STEP_KINDS[opts.step] : ['text', 'audio', 'survey']).map(function (k) {
       return el('label', {}, [el('input', { type: 'radio', name: 'm-kind', value: k, checked: k === kind, onchange: function () {
@@ -574,12 +772,101 @@
       el('button', { type: 'button', class: 'primary wide', text: 'このファイルを入れる', onclick: addDrive }),
     ]);
     var pick = el('button', { type: 'button', class: 'wide', text: 'ファイルを選ぶ', onclick: function () { if (!state.uploading) { fileInput.value = ''; fileInput.click(); } } });
-    var send = el('button', { type: 'button', class: 'primary wide', text: 'ファイルを送る', disabled: true, onclick: sendFile });
+    var send = el('button', { type: 'button', class: 'primary wide', text: 'ファイルを送る', disabled: true, onclick: function () { sendFile(file, durationSec, ''); } });
     var fileNote = el('p', { class: 'sub' });
-    var fileBox = el('div', {}, [fileNote, pick, fileInput, fileInfo, progress, send]);
+    var fileBox = el('div', {}, [fileNote, pick, fileInput, fileInfo, send]);
+    var recBox = el('div', { class: 'rec' });
     var out = el('p', { class: 'msg' });
 
     function clearFile() { file = null; durationSec = 0; fileInput.value = ''; fileInfo.textContent = ''; }
+
+    // ---- このアプリで録音する欄 ----
+    var recClock = null, recUrl = '';
+    function formValues() { return { name: name.value, date: date.value, attendees: attendees.value, glossary: glossary.value }; }
+    var cur0 = Rec.current();
+    if (Rec.here(caseId, place) && cur0.form) {
+      name.value = cur0.form.name || ''; attendees.value = cur0.form.attendees || ''; glossary.value = cur0.form.glossary || '';
+      if (cur0.form.date) date.value = cur0.form.date;
+    }
+    [name, date, attendees, glossary].forEach(function (i) { i.addEventListener('input', function () { if (Rec.here(caseId, place)) Rec.setForm(formValues()); }); });
+
+    function recFail(e) { out.textContent = (e && e.name === 'NotAllowedError') ? 'マイクを使う許可がありません。ブラウザの設定で、このサイトのマイクを「許可」にしてください。' : errText(e); out.className = 'msg err'; }
+
+    function renderRec() {
+      var r = Rec.current();
+      recClock = null;
+      if (recUrl) { URL.revokeObjectURL(recUrl); recUrl = ''; }
+      if (r && !Rec.here(caseId, place)) {
+        var where = r.caseId === caseId ? '「' + placeName(r.step) + '」のタブ' : 'ほかの案件';
+        recBox.replaceChildren(el('div', { class: 'warn', text: Rec.busy()
+          ? where + 'で録音中です。録音は同時に1本だけです。'
+          : where + 'に、送っていない録音があります。そちらで送るか消してから録音してください。' }));
+        return;
+      }
+      if (!r) {
+        var list = el('div', {});
+        Rec.pending(caseId, place).then(function (ps) {
+          list.replaceChildren.apply(list, ps.map(function (p) {
+            var d = new Date(p.started);
+            return el('div', { class: 'warn' }, [
+              el('div', { text: '送っていない録音があります：' + (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':' + ('0' + d.getMinutes()).slice(-2) + ' から・約' + Math.max(1, Math.round((p.sec || 0) / 60)) + '分' + (p.done ? '' : '（途中で画面が閉じた録音）') }),
+              el('div', { class: 'row' }, [
+                el('button', { type: 'button', class: 'small', text: 'この録音を戻す', onclick: function () { Rec.restore(p).catch(recFail); } }),
+                el('button', { type: 'button', class: 'small', text: '消す', onclick: function () {
+                  if (!confirm('この録音を消しますか？（元に戻せません）')) return;
+                  Rec.sent(p.id).then(renderRec);
+                } }),
+              ]),
+            ]);
+          }));
+        });
+        recBox.replaceChildren(
+          list,
+          el('p', { class: 'sub', text: '打ち合わせの音声を、このアプリでそのまま録ります（3時間まで）。録った分は端末の中にも少しずつ残すので、途中で画面が閉じても、次に開いたときに戻せます。' }),
+          el('p', { class: 'sub', text: '録音中はこの画面を開いたままにしてください。画面が消えないようにします。ほかのアプリに切り替えたり画面を閉じたりすると、スマホでは録音が止まることがあります。' }),
+          el('button', { type: 'button', class: 'primary wide rec-start', text: '● 録音を始める', onclick: function () {
+            out.textContent = '';
+            Rec.start(caseId, place, formValues()).catch(recFail);
+          } })
+        );
+        return;
+      }
+      if (r.status === 'recording' || r.status === 'paused' || r.status === 'stopping') {
+        recClock = el('div', { class: 'rec-clock' + (r.status === 'recording' ? ' on' : ''), text: '' });
+        tickRec();
+        recBox.replaceChildren(
+          recClock,
+          el('div', { class: 'row' }, [
+            r.status === 'recording' ? el('button', { type: 'button', text: '一時停止', onclick: Rec.pause }) : null,
+            r.status === 'paused' ? el('button', { type: 'button', text: '再開する', onclick: Rec.resume }) : null,
+            el('button', { type: 'button', class: 'primary', text: '■ 止める', disabled: r.status === 'stopping', onclick: Rec.stop }),
+          ]),
+          el('p', { class: 'sub', text: '録音中も、ほかのタブを見たり文字を打ったりできます。この画面は開いたままにしてください。' })
+        );
+        return;
+      }
+      // 止めた録音：聞き直して送る
+      var url = recUrl = URL.createObjectURL(r.file);
+      recBox.replaceChildren(
+        r.note ? el('div', { class: 'warn', text: r.note }) : null,
+        el('div', { class: 'sub', text: '🎧 ' + r.file.name + '（' + mb(r.file.size) + '・' + Rec.clock(r.sec) + '）' }),
+        el('audio', { controls: true, src: url, preload: 'metadata', class: 'rec-play' }),
+        el('button', { type: 'button', class: 'primary wide', text: 'この録音を送る', disabled: state.uploading, onclick: function () {
+          var id = r.id;
+          sendFile(r.file, r.sec, id);
+        } }),
+        el('button', { type: 'button', class: 'wide', text: '録音を消す', disabled: state.uploading, onclick: function () {
+          if (!confirm('この録音を消しますか？（送っていないので、元に戻せません）')) return;
+          Rec.discard();
+        } })
+      );
+    }
+    function tickRec() {
+      var r = Rec.current();
+      if (!recClock || !r) return;
+      var sec = Rec.secOf(r);
+      recClock.textContent = (r.status === 'recording' ? '● 録音中　' : r.status === 'paused' ? '⏸ 一時停止中　' : '止めています…　') + Rec.clock(sec);
+    }
 
     function refresh() {
       // 入れ方の選択（2つ以上あるときだけ出す）
@@ -593,6 +880,8 @@
       textBox.hidden = how !== 'type';
       driveBox.hidden = how !== 'drive';
       fileBox.hidden = how !== 'file';
+      recBox.hidden = how !== 'rec';
+      if (how === 'rec') renderRec();
       textLabel.textContent = inStep
         ? (kind === 'survey' ? '質問票の回答（メールなどで届いた文を貼る）' : '打ち合わせのメモ（打つ・声で入れる・貼る）')
         : (kind === 'survey' ? 'アンケートの回答（メールなどの文を貼る）' : '要件の文章（打つ・声で入れる・貼る）');
@@ -630,7 +919,8 @@
       call('addDriveFile', { caseId: state.c.id, kind: 'survey', name: name.value, date: date.value, url: driveUrl.value, step: opts.step || '' }, '受け付けています…', 'case-msg')
         .then(function (r) { after(r, '受け付けました。文字にし終わると「文字にした」になります'); });
     }
-    async function sendFile() {
+    /** ファイルを送る。recId＝このアプリで録った録音（送り終えたら端末の中の保存を消す） */
+    async function sendFile(file, durationSec, recId) {
       if (!file || state.uploading) return;
       state.uploading = true;
       refresh();
@@ -640,8 +930,8 @@
       out.className = 'msg';
       try {
         var startRes = await api('uploadStart', {
-          caseId: state.c.id, kind: kind, name: name.value, date: date.value, fileName: file.name, mimeType: file.type || '',
-          size: file.size, durationSec: durationSec, attendees: attendees.value, glossary: glossary.value, step: opts.step || '',
+          caseId: caseId, kind: kind, name: name.value, date: date.value, fileName: file.name, mimeType: file.type || '',
+          size: file.size, durationSec: durationSec, attendees: attendees.value, glossary: glossary.value, step: place,
         });
         if (!startRes.ok) throw new Error(errText(startRes));
         var offset = 0;
@@ -653,6 +943,7 @@
           progress.lastChild.textContent = '送っています ' + Math.floor(100 * offset / file.size) + '%（' + mb(offset) + ' / ' + mb(file.size) + '）';
         }
         meter.style.width = '100%';
+        if (recId) await Rec.sent(recId);
         state.uploading = false;
         keepAwake(false);
         refreshCase(false).then(function () {
@@ -661,7 +952,7 @@
         });
       } catch (e) {
         progress.hidden = true;
-        out.textContent = '送れませんでした。もう一度「ファイルを送る」を押してください。\n' + errText(e);
+        out.textContent = '送れませんでした。もう一度「' + (recId ? 'この録音を送る' : 'ファイルを送る') + '」を押してください。' + (recId ? '録音は端末の中に残っています。' : '') + '\n' + errText(e);
         out.className = 'msg err';
       } finally {
         state.uploading = false;
@@ -672,8 +963,13 @@
 
     var form = el('div', { class: 'panel' }, [
       el('h3', { text: opts.title || '材料を入れる' }), kinds, howBox, nameLabel, dateLabel,
-      audioBox, textBox, driveBox, fileBox, out,
+      audioBox, textBox, driveBox, fileBox, recBox, progress, out,
     ]);
+    // 録音の状態が変わったら録音の欄を描き直す（1秒ごとは時計だけ）
+    Rec.on(form, function (what) {
+      if (how !== 'rec') return;
+      if (what === 'tick') tickRec(); else renderRec();
+    });
     refresh();
     return form;
   }
@@ -706,7 +1002,7 @@
   function keepAwake(on) {
     try {
       if (on && navigator.wakeLock) navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; }).catch(function () {});
-      if (!on && wakeLock) { wakeLock.release(); wakeLock = null; }
+      if (!on && wakeLock && !Rec.busy()) { wakeLock.release(); wakeLock = null; }   // 録音中は画面を消さないままにする
     } catch (e) { /* 対応していない端末はそのまま */ }
   }
 
@@ -1071,7 +1367,7 @@
   /** 方針0〜2・方針3〜5のタブで、その段の打ち合わせの録音（ほかの材料も可）を入れる欄と、このタブで入れた材料の一覧 */
   function stepMaterials(step) {
     var mine = (state.c.materials || []).filter(function (m) { return m.step === step; });
-    var open = state.matOpen[step] !== undefined ? state.matOpen[step] : !mine.length;
+    var open = Rec.here(state.c.id, step) || (state.matOpen[step] !== undefined ? state.matOpen[step] : !mine.length);
     var box = el('details', { class: 'panel stepmat', open: open || null }, [
       el('summary', { text: '🎧 打ち合わせの録音・メモを入れる' +(mine.length ? '（このタブで入れた材料 ' + mine.length + '本）' : '') }),
       el('p', { class: 'sub', text: (step === 's3'

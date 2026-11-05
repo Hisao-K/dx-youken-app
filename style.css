@@ -177,3 +177,10 @@ table.hearing tr.grp th { border-left: 4px solid var(--orange); }
 .diff .del { background: rgba(248, 81, 73, 0.22); text-decoration: line-through; }
 .diff .same { opacity: 0.75; }
 .diff .skip { opacity: 0.6; font-style: italic; }
+/* このアプリで録音する欄（2026-11-05） */
+.rec { display: flex; flex-direction: column; gap: 8px; margin: 6px 0; }
+.rec-clock { font-size: 26px; font-variant-numeric: tabular-nums; font-weight: 700; padding: 8px 0; }
+.rec-clock.on { color: var(--err); }
+.rec-play { width: 100%; }
+.rec .row { display: flex; gap: 8px; flex-wrap: wrap; }
+.rec .row button { flex: 1; }
