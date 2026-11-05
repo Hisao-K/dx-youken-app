@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>DX要件定義</title>
+  <meta name="theme-color" content="#E7741D">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="DX要件定義">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="referrer" content="no-referrer">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <header class="bar">
+    <button id="back" class="back" hidden>‹ 一覧</button>
+    <h1 id="bar-title">DX要件定義</h1>
+    <span id="who" class="who"></span>
+    <button id="logout" class="close" hidden>閉じる</button>
+  </header>
+
+  <main>
+    <!-- 設定：GAS の URL がまだない -->
+    <section id="view-setup" class="view" hidden>
+      <h2>はじめの設定</h2>
+      <p>お渡しした「設定用リンク」を開いてください。リンクが開けないときは、設定コード（https://script.google.com/… で始まるURL）を貼り付けてください。</p>
+      <label class="field">設定コード
+        <input id="setup-url" type="url" inputmode="url" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off">
+      </label>
+      <button id="setup-save" class="primary">保存する</button>
+      <p id="setup-msg" class="msg"></p>
+    </section>
+
+    <!-- ログイン -->
+    <section id="view-login" class="view" hidden>
+      <h2>ログイン</h2>
+      <p>会社の Google アカウントでログインしてください。</p>
+      <div id="gsi-button"></div>
+      <p id="login-msg" class="msg"></p>
+    </section>
+
+    <!-- 案件の一覧と新しい相談 -->
+    <section id="view-list" class="view" hidden>
+      <div class="row">
+        <button id="new-open" class="primary">＋ 新しい相談</button>
+        <button id="list-reload">読み直す</button>
+      </div>
+      <form id="new-form" class="panel" hidden>
+        <h2>新しい相談の登録</h2>
+        <label class="field">案件名<input id="n-title" maxlength="100" placeholder="例：GWS活用を中心としたDX戦略策定"></label>
+        <div class="radios">相談先
+          <label><input type="radio" name="n-org" value="company" checked> 会社</label>
+          <label><input type="radio" name="n-org" value="municipality"> 自治体他</label>
+        </div>
+        <label class="field">会社名・自治体名（情報を調べるためだけに使う。分析のファイルには書かない）<input id="n-company" maxlength="100"></label>
+        <label class="field">相談の出どころ<input id="n-source" maxlength="200" placeholder="例：北九州市デジタル相談窓口／HPの問い合わせ"></label>
+        <label class="field">保存先<select id="n-savedir"></select></label>
+        <label class="field">サブフォルダ（任意）<input id="n-subdir" maxlength="200"></label>
+        <label class="field">参照URL（任意。1行に1つ。入れると、会社情報の取得はこのページだけを読む）<textarea id="n-refs" rows="2"></textarea></label>
+        <label class="field">要件の文章（任意。相談の原文・メモ。録音やアンケートは登録の後に「材料」から入れる）<textarea id="n-text" rows="6"></textarea></label>
+        <div class="row"><button type="button" class="proof" data-target="n-text">誤変換を確かめる</button></div>
+        <button id="new-save" type="button" class="primary">登録する</button>
+        <p id="new-msg" class="msg"></p>
+      </form>
+      <p id="list-msg" class="msg"></p>
+      <ul id="case-list" class="list"></ul>
+    </section>
+
+    <!-- 案件 -->
+    <section id="view-case" class="view" hidden>
+      <div id="case-head" class="case-head"></div>
+      <nav class="tabs" role="tablist">
+        <button data-tab="mat" role="tab">材料</button>
+        <button data-tab="reg" role="tab">登録</button>
+        <button data-tab="s3" role="tab">方針0〜2</button>
+        <button data-tab="s4" role="tab">方針3〜5</button>
+        <button data-tab="s5" role="tab">分析</button>
+      </nav>
+      <p id="case-msg" class="msg"></p>
+      <div id="tab-mat" class="tab" hidden></div>
+      <div id="tab-reg" class="tab" hidden></div>
+      <div id="tab-step" class="tab" hidden></div>
+    </section>
+  </main>
+
+  <div id="busy" class="busy" hidden><div class="busy-box"><span class="spinner"></span><span id="busy-text">処理しています…</span></div></div>
+
+  <!-- 文を見る・直すための窓（材料の中身・誤変換の確かめ） -->
+  <dialog id="dlg" class="dlg">
+    <h3 id="dlg-title"></h3>
+    <p id="dlg-note" class="sub"></p>
+    <textarea id="dlg-text" rows="16"></textarea>
+    <div class="row">
+      <button id="dlg-ok" class="primary">保存する</button>
+      <button id="dlg-cancel">閉じる</button>
+    </div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

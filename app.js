@@ -1,0 +1,972 @@
+// dx-youken-app（DX要件定義）の画面（PWA）。
+// 画面だけを受け持ち、データの出し入れはすべて GAS（AppApi）に任せる。ログインと録音の送り方は議事録デスク（gijiroku-app）と同じ。
+// 案件のデータはこの端末にもこのサイトにも保存しない（端末に覚えるのは GAS の URL とログイン中のトークンだけ）。
+(function () {
+  'use strict';
+
+  var CONFIG = window.DXY_CONFIG || {};
+  var API_URL_STORE = 'dxy.api';
+  var TOKEN_KEY = 'dxy.idt';
+  var GAS_URL_RE = /^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/[A-Za-z0-9_-]+\/exec$/;
+  var IS_LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  var POLL_MS = 10000;
+  var CHUNK_TRIES = 5;
+  var KIND_LABEL = { text: '要件の文章', audio: '録音', survey: 'アンケートの結果' };
+  var STEP_TAB = { s3: '方針0〜2・ヒアリング', s4: '方針3〜5', s5: '分析' };
+
+  var state = {
+    apiUrl: '', idToken: '', session: 0, tokenWaiters: [],
+    cfg: null, caseId: '', c: null, tab: 'mat', dirty: false, uploading: false, pollTimer: 0,
+  };
+
+  // =========================
+  //  小物
+  // =========================
+  function $(id) { return document.getElementById(id); }
+
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    Object.keys(attrs || {}).forEach(function (k) {
+      var v = attrs[k];
+      if (v == null || v === false) return;
+      if (k === 'text') node.textContent = v;
+      else if (k === 'class') node.className = v;
+      else if (k === 'onclick') node.addEventListener('click', v);
+      else if (k === 'oninput') node.addEventListener('input', v);
+      else if (k === 'onchange') node.addEventListener('change', v);
+      else if (k === 'value') node.value = v;
+      else if (k === 'checked') node.checked = !!v;
+      else if (k === 'disabled') node.disabled = !!v;
+      else node.setAttribute(k, v === true ? '' : v);
+    });
+    (children || []).forEach(function (ch) { if (ch) node.appendChild(typeof ch === 'string' ? document.createTextNode(ch) : ch); });
+    return node;
+  }
+
+  function storageGet(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
+  function storageSet(key, v) { try { localStorage.setItem(key, v); } catch (e) { /* 保存できなくても動かす */ } }
+  function sessionGet(key) { try { return sessionStorage.getItem(key) || ''; } catch (e) { return ''; } }
+  function sessionSet(key, v) { try { v ? sessionStorage.setItem(key, v) : sessionStorage.removeItem(key); } catch (e) { /* 同上 */ } }
+
+  function msg(id, text, kind) {
+    var p = $(id);
+    if (!p) return;
+    p.textContent = text || '';
+    p.className = 'msg' + (kind ? ' ' + kind : '');
+  }
+
+  function busy(text) { $('busy-text').textContent = text || '処理しています…'; $('busy').hidden = false; }
+  function idle() { $('busy').hidden = true; }
+
+  function show(view) {
+    ['setup', 'login', 'list', 'case'].forEach(function (v) { $('view-' + v).hidden = v !== view; });
+    $('back').hidden = view !== 'case';
+    window.scrollTo(0, 0);
+  }
+
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function ymd(d) { return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function mb(bytes) { return (bytes / 1024 / 1024).toFixed(1) + 'MB'; }
+  function hm(s) { return String(s || '').replace('T', ' ').slice(5, 16); }
+  function errText(x) { return (x && (x.message || String(x))) || '失敗しました。'; }
+  /** GAS が返すリンクのうち、Google ドライブ・ドキュメントのものだけを使う */
+  function safeLink(url) { return /^https:\/\/(docs|drive)\.google\.com\//.test(String(url || '')) ? url : ''; }
+
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve(String(r.result).split(',')[1] || ''); };
+      r.onerror = function () { reject(r.error); };
+      r.readAsDataURL(blob);
+    });
+  }
+
+  function autosize(t) { t.style.height = 'auto'; t.style.height = (t.scrollHeight + 4) + 'px'; }
+
+  /** 中身を入れ替える（出さない部分＝null は飛ばす） */
+  function put(node, items) { node.replaceChildren.apply(node, items.filter(Boolean)); }
+
+  // =========================
+  //  設定（GAS の URL）
+  // =========================
+  function validApiUrl(u) {
+    if (IS_LOCAL && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//.test(u)) return true;
+    return GAS_URL_RE.test(u);
+  }
+  function apiLabel(u) { var m = String(u || '').match(/\/s\/([A-Za-z0-9_-]+)\//); return m ? '…' + m[1].slice(-8) : u; }
+
+  /** リンクの ?api= は、確認して OK のときだけ使う（議事録デスク・名刺管理君と同じ） */
+  function loadApiUrl() {
+    var params = new URLSearchParams(location.search);
+    var fromLink = params.get('api');
+    var saved = storageGet(API_URL_STORE);
+    if (fromLink && validApiUrl(fromLink) && fromLink !== saved) {
+      var question = validApiUrl(saved)
+        ? '接続先を切り替えますか？\n\n今の接続先: ' + apiLabel(saved) + '\n新しい接続先: ' + apiLabel(fromLink)
+        : 'このリンクの接続先を使いますか？\n\n接続先: ' + apiLabel(fromLink);
+      if (IS_LOCAL || confirm(question + '\n\nKamo\'s BASE から受け取ったリンクのときだけ「OK」を押してください。')) {
+        storageSet(API_URL_STORE, fromLink);
+        sessionSet(TOKEN_KEY, '');
+        saved = fromLink;
+      }
+    }
+    if (fromLink) {
+      params.delete('api');
+      try { history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : '') + location.hash); } catch (e) { /* 消せなくても動かす */ }
+    }
+    state.apiUrl = validApiUrl(saved) ? saved : '';
+  }
+
+  $('setup-save').addEventListener('click', function () {
+    var u = $('setup-url').value.trim();
+    if (!validApiUrl(u)) { msg('setup-msg', '設定コードの形が違います。https://script.google.com/macros/s/…/exec の形のURLを貼り付けてください。', 'err'); return; }
+    if (u !== storageGet(API_URL_STORE)) sessionSet(TOKEN_KEY, '');
+    storageSet(API_URL_STORE, u);
+    state.apiUrl = u;
+    start();
+  });
+
+  // =========================
+  //  ログイン（Google）
+  // =========================
+  function decodeJwt(token) {
+    try {
+      var part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      var json = decodeURIComponent(atob(part).split('').map(function (c) { return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); }).join(''));
+      return JSON.parse(json);
+    } catch (e) { return null; }
+  }
+  function apiId(u) { var m = String(u || '').match(/\/s\/([A-Za-z0-9_-]+)\//); return m ? m[1] : (IS_LOCAL ? 'local' : ''); }
+  function loginNonce() {
+    var bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return apiId(state.apiUrl) + '.' + Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  function tokenValid(token) {
+    var p = token && decodeJwt(token);
+    return !!(p && p.exp * 1000 - Date.now() > 60 * 1000 && String(p.nonce || '').split('.')[0] === apiId(state.apiUrl));
+  }
+  function devMode() { return IS_LOCAL && CONFIG.devIdToken; }
+
+  function setToken(token) {
+    state.idToken = token || '';
+    sessionSet(TOKEN_KEY, state.idToken);
+    var p = token && decodeJwt(token);
+    $('who').textContent = p ? p.email : (devMode() ? '（模擬環境）' : '');
+    $('logout').hidden = !state.idToken && !devMode();
+  }
+
+  function onCredential(res) {
+    if (!devMode() && !tokenValid(res.credential)) { msg('login-msg', 'ログインをやり直してください（接続先が変わったため）。', 'err'); return; }
+    setToken(res.credential);
+    state.tokenWaiters.splice(0).forEach(function (w) { w(state.idToken); });
+    if (!$('view-login').hidden) enterMain();
+  }
+
+  function initGoogle() {
+    if (devMode()) return true;
+    if (!CONFIG.googleClientId) { msg('login-msg', 'アプリの設定が終わっていません（Google のクライアントIDが未設定）。', 'err'); return false; }
+    if (!(window.google && google.accounts && google.accounts.id)) return false;
+    google.accounts.id.initialize({
+      client_id: CONFIG.googleClientId, nonce: loginNonce(), callback: onCredential,
+      auto_select: true, itp_support: true, use_fedcm_for_prompt: true,
+    });
+    google.accounts.id.renderButton($('gsi-button'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ja' });
+    return true;
+  }
+
+  function freshToken() {
+    if (devMode()) return Promise.resolve(CONFIG.devIdToken);
+    if (tokenValid(state.idToken)) return Promise.resolve(state.idToken);
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      state.tokenWaiters.push(function (t) { done = true; resolve(t); });
+      try { google.accounts.id.prompt(); } catch (e) { /* 下のタイマーでログイン画面へ */ }
+      setTimeout(function () {
+        if (done) return;
+        state.tokenWaiters.splice(0);
+        endSession('ログインの有効期限が切れました。もう一度ログインしてください。', 'err');
+        reject(new Error('ログインが必要です'));
+      }, 6000);
+    });
+  }
+
+  /** 「閉じる」＝ログアウト。画面に出ている案件・入力中の文字を消してログイン画面に戻す */
+  function logout() {
+    if (state.uploading) { alert('ファイルを送っている途中です。送り終わってから閉じてください。'); return; }
+    if (state.dirty && !confirm('保存していない直しがあります。消えますが、閉じますか？')) return;
+    if (!confirm('ログアウトして閉じますか？\n次に開いたときは、ログインからになります。')) return;
+    try { google.accounts.id.disableAutoSelect(); } catch (e) { /* 未読み込みでも続ける */ }
+    endSession('ログアウトしました。アプリを閉じるときは、スマホの操作で閉じてください。', 'ok');
+  }
+
+  function endSession(text, kind) {
+    state.session++;
+    setToken('');
+    try { google.accounts.id.cancel(); } catch (e) { /* 何もしない */ }
+    idle();
+    stopPoll();
+    state.uploading = false;
+    state.dirty = false;
+    state.c = null;
+    state.caseId = '';
+    ['case-list', 'case-head', 'tab-mat', 'tab-reg', 'tab-step'].forEach(function (id) { $(id).replaceChildren(); });
+    $('new-form').reset();
+    $('new-form').hidden = true;
+    show('login');
+    msg('login-msg', text, kind);
+  }
+
+  $('who').addEventListener('click', logout);
+  $('logout').addEventListener('click', logout);
+
+  // =========================
+  //  GAS とのやり取り
+  // =========================
+  function api(action, params) {
+    var session = state.session;
+    var never = function () { return new Promise(function () {}); };
+    return freshToken().then(function (idToken) {
+      if (session !== state.session) return never();
+      return fetch(state.apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },   // 事前確認（プリフライト）を出さない
+        body: JSON.stringify(Object.assign({ action: action, idToken: idToken }, params || {})),
+        redirect: 'follow',
+      }).catch(function (e) {
+        throw new Error('通信できませんでした。電波のよい場所でもう一度お試しください。\n[原因] ' + e.message);
+      }).then(function (res) {
+        return res.json().catch(function () { throw new Error('応答を読めませんでした。\n[原因] HTTP ' + res.status); });
+      }).then(function (json) {
+        if (session !== state.session) return never();
+        if (!json.ok && json.code === 'AUTH') { endSession(json.message, 'err'); return never(); }
+        return json;
+      }, function (e) { if (session !== state.session) return never(); throw e; });
+    }, function (e) { if (session !== state.session) return never(); throw e; });
+  }
+
+  /** 画面を止めて呼ぶ。失敗したら msgId に出す。成功したら応答を返す（失敗は null） */
+  function call(action, params, busyText, msgId) {
+    busy(busyText);
+    return api(action, params).then(function (res) {
+      idle();
+      if (!res.ok) { if (msgId) msg(msgId, errText(res), 'err'); else alert(errText(res)); return null; }
+      return res;
+    }).catch(function (e) {
+      idle();
+      if (msgId) msg(msgId, errText(e), 'err'); else alert(errText(e));
+      return null;
+    });
+  }
+
+  // =========================
+  //  はじまり・一覧
+  // =========================
+  function start() {
+    loadApiUrl();
+    if (!state.apiUrl) { show('setup'); return; }
+    setToken(sessionGet(TOKEN_KEY));
+    if (devMode() || tokenValid(state.idToken)) { enterMain(); return; }
+    show('login');
+    var tries = 0;
+    (function waitGsi() {
+      if (initGoogle()) return;
+      if (++tries < 50) setTimeout(waitGsi, 200);
+      else msg('login-msg', 'Google のログインを読み込めませんでした。電波を確かめて、開き直してください。', 'err');
+    })();
+  }
+
+  function enterMain() {
+    show('list');
+    api('config').then(function (res) {
+      if (!res.ok) { msg('list-msg', errText(res), 'err'); return; }
+      state.cfg = res;
+      $('n-savedir').replaceChildren.apply($('n-savedir'), res.saveDirs.map(function (d) { return el('option', { value: d.key, text: d.label }); }));
+      loadCases();
+    }).catch(function (e) { msg('list-msg', errText(e), 'err'); });
+  }
+
+  function loadCases() {
+    msg('list-msg', '読み込んでいます…');
+    return api('listCases').then(function (res) {
+      if (!res.ok) { msg('list-msg', errText(res), 'err'); return; }
+      msg('list-msg', res.items.length ? '' : 'まだ案件はありません。「＋ 新しい相談」から登録してください。');
+      $('case-list').replaceChildren.apply($('case-list'), res.items.map(function (it) {
+        return el('li', {}, [el('button', { onclick: function () { openCase(it.id); } }, [
+          el('span', { class: 'name', text: it.title }),
+          el('span', { class: 'sub', text: it.stage + '｜' + hm(it.updated) + (it.pending ? '｜処理中' : '') }),
+        ])]);
+      }));
+    }).catch(function (e) { msg('list-msg', errText(e), 'err'); });
+  }
+
+  $('list-reload').addEventListener('click', loadCases);
+  $('new-open').addEventListener('click', function () { $('new-form').hidden = !$('new-form').hidden; });
+  $('new-save').addEventListener('click', function () {
+    var org = document.querySelector('input[name="n-org"]:checked').value;
+    call('createCase', {
+      title: $('n-title').value, company: $('n-company').value, org_type: org, source: $('n-source').value,
+      saveDir: $('n-savedir').value, subdir: $('n-subdir').value, ref_urls: $('n-refs').value, text: $('n-text').value,
+    }, '登録しています…', 'new-msg').then(function (res) {
+      if (!res) return;
+      $('new-form').reset();
+      $('new-form').hidden = true;
+      openCase(res.case.id, 'mat');
+    });
+  });
+
+  $('back').addEventListener('click', function () {
+    if (state.uploading) { alert('ファイルを送っている途中です。送り終わってから戻ってください。'); return; }
+    if (state.dirty && !confirm('保存していない直しがあります。消えますが、一覧に戻りますか？')) return;
+    stopPoll();
+    state.dirty = false;
+    state.c = null;
+    state.caseId = '';
+    $('bar-title').textContent = 'DX要件定義';
+    show('list');
+    loadCases();
+  });
+
+  window.addEventListener('beforeunload', function (e) {
+    if (!state.uploading && !state.dirty) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+
+  // =========================
+  //  案件
+  // =========================
+  function openCase(id, tab) {
+    state.caseId = id;
+    state.dirty = false;
+    if (tab) state.tab = tab;
+    show('case');
+    refreshCase(false);
+  }
+
+  /** 案件を読み直す。quiet＝処理の進み具合を見るための読み直し（直している途中の段は描き直さない） */
+  function refreshCase(quiet) {
+    var id = state.caseId;
+    if (!quiet) busy('読み込んでいます…');
+    return api('getCase', { caseId: id, withDesk: true }).then(function (res) {
+      idle();
+      if (id !== state.caseId) return;
+      if (!res.ok) { msg('case-msg', errText(res), 'err'); return; }
+      setCase(res.case, quiet);
+    }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
+  }
+
+  /** 受け取った案件で画面を描き直す。quiet で直している途中なら、見出しと状態だけを描き直す */
+  function setCase(c, quiet) {
+    var keepDesk = state.c && state.c.desk;
+    state.c = c;
+    if (!c.desk && keepDesk) c.desk = keepDesk;
+    $('bar-title').textContent = c.title;
+    renderHead();
+    if (!(quiet && state.dirty)) { state.dirty = false; renderTab(); }
+    else if (isStepTab()) renderStepStatus();
+    schedulePoll();
+  }
+
+  function working() {
+    var c = state.c;
+    if (!c) return false;
+    return (c.jobs || []).length > 0 || Object.keys(c.steps).some(function (s) { return c.steps[s].deskPending; });
+  }
+
+  function schedulePoll() {
+    stopPoll();
+    if (!working()) return;
+    state.pollTimer = setTimeout(function () {
+      state.pollTimer = 0;
+      if (document.visibilityState === 'visible' && !state.uploading) refreshCase(true); else schedulePoll();
+    }, POLL_MS);
+  }
+  function stopPoll() { if (state.pollTimer) clearTimeout(state.pollTimer); state.pollTimer = 0; }
+
+  function renderHead() {
+    var c = state.c;
+    var jobs = (c.jobs || []).map(function (j) {
+      return j.type === 'transcribe' ? '文字起こし' : j.type === 'extract' ? 'ファイルの読み取り' : j.type === 'company' ? '会社情報の取得' : STEP_TAB[j.step] + 'を作成';
+    });
+    put($('case-head'), [
+      el('div', { class: 'sub', text: c.company + '｜' + c.source }),
+      el('div', { class: 'links' }, [
+        safeLink(c.links.folder) ? el('a', { href: c.links.folder, target: '_blank', rel: 'noopener', text: '案件フォルダ' }) : null,
+        safeLink(c.links.md) ? el('a', { href: c.links.md, target: '_blank', rel: 'noopener', text: '分析の md' }) : null,
+        safeLink(c.links.questionnaire) ? el('a', { href: c.links.questionnaire, target: '_blank', rel: 'noopener', text: '質問票（Word）' }) : null,
+        el('button', { class: 'link', text: '読み直す', onclick: function () {
+          if (state.dirty && !confirm('保存していない直しがあります。消えますが、読み直しますか？')) return;
+          state.dirty = false; refreshCase(false);
+        } }),
+      ]),
+      jobs.length ? el('div', { class: 'warn', text: '処理中：' + jobs.join('・') + '（終わると自動で表示が変わります）' }) : null,
+      c.lastError ? el('div', { class: 'errbox', text: c.lastError }) : null,
+    ]);
+    document.querySelectorAll('.tabs button').forEach(function (b) {
+      var t = b.dataset.tab;
+      var label = { mat: '材料', reg: '登録', s3: '方針0〜2', s4: '方針3〜5', s5: '分析' }[t];
+      var s = c.steps[t];
+      if (s) label += s.deskPending ? ' 🕐' : s.review === 'needed' && s.content ? ' ●' : s.ok ? ' ✓' : '';
+      if (s && s.stale) label += '！';
+      b.textContent = label;
+      b.setAttribute('aria-selected', String(t === state.tab));
+    });
+  }
+
+  function isStepTab() { return ['s3', 's4', 's5'].indexOf(state.tab) >= 0; }
+
+  document.querySelectorAll('.tabs button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (!state.c || b.dataset.tab === state.tab) return;
+      if (state.dirty && !confirm('保存していない直しがあります。消えますが、ほかのタブへ移りますか？')) return;
+      state.dirty = false;
+      state.tab = b.dataset.tab;
+      renderHead();
+      renderTab();
+    });
+  });
+
+  function renderTab() {
+    $('tab-mat').hidden = state.tab !== 'mat';
+    $('tab-reg').hidden = state.tab !== 'reg';
+    $('tab-step').hidden = !isStepTab();
+    msg('case-msg', '');
+    if (state.tab === 'mat') renderMaterials();
+    else if (state.tab === 'reg') renderReg();
+    else renderStep(state.tab);
+  }
+
+  /** 操作のあと、返ってきた案件で描き直す */
+  function after(res, note) {
+    if (!res) return;
+    state.dirty = false;
+    setCase(res.case, false);
+    if (note) msg('case-msg', note, 'ok');
+  }
+
+  // =========================
+  //  材料
+  // =========================
+  var MAT_STATUS = {
+    done: ['文字にした', 'st-done'], error: ['エラー', 'st-err'], running: ['処理中', 'st-run'],
+    queued: ['待機中', 'st-wait'], uploading: ['アップロード中', 'st-wait'],
+  };
+
+  function renderMaterials() {
+    var c = state.c;
+    var box = $('tab-mat');
+    var list = el('div', { class: 'list' }, (c.materials || []).map(function (m) {
+      var st = MAT_STATUS[m.status] || ['不明', 'st-wait'];
+      var ir = m.importResult;
+      return el('div', { class: 'mat' }, [
+        el('div', { class: 'head' }, [
+          el('span', { class: 'badge ' + st[1], text: st[0] }),
+          el('span', { class: 'badge st-wait', text: KIND_LABEL[m.kind] || m.kind }),
+          el('span', { class: 'name', text: m.name }),
+        ]),
+        el('div', { class: 'sub', text: [m.date, m.chars ? m.chars.toLocaleString() + '字' : '', m.durationSec ? Math.round(m.durationSec / 60) + '分の録音' : '', m.progress].filter(String).join('｜') }),
+        m.error ? el('div', { class: 'errbox', text: m.error }) : null,
+        ir ? el('div', { class: 'warn', text: '質問票として取り込み：' + ir.filled.length + '問に回答を入れた' +
+          (ir.same ? '／同じ回答 ' + ir.same + '問' : '') + (ir.blank ? '／空欄 ' + ir.blank + '問' : '') +
+          (ir.conflicts.length ? '／回答が入っているため上書きしなかった 問' + ir.conflicts.join('・') : '') +
+          (ir.unmatched.length ? '／問いの文が合わず入れなかった 質問票のNo.' + ir.unmatched.join('・') : '') }) : null,
+        el('div', { class: 'acts' }, [
+          m.status === 'done' ? el('button', { class: 'small', text: '中身を見る・直す', onclick: function () { openMaterial(m); } }) : null,
+          m.status === 'error' && m.srcFileId ? el('button', { class: 'small', text: 'やり直す', onclick: function () {
+            call('retryMaterial', { caseId: c.id, materialId: m.id }, 'やり直しています…', 'case-msg').then(function (r) { after(r, '待機中にしました'); });
+          } }) : null,
+          ir && ir.conflicts.length ? el('button', { class: 'small', text: '回答が入っている欄も上書きする', onclick: function () {
+            if (!confirm('回答が入っている欄も、この質問票の回答で上書きしますか？')) return;
+            call('reimportSurvey', { caseId: c.id, materialId: m.id, overwrite: true }, '受け付けています…', 'case-msg').then(function (r) { after(r, '取り込み直しを受け付けました'); });
+          } }) : null,
+          el('button', { class: 'small', text: '外す', onclick: function () {
+            if (!confirm('「' + m.name + '」を材料から外しますか？（ファイルはゴミ箱へ移します）')) return;
+            call('removeMaterial', { caseId: c.id, materialId: m.id }, '外しています…', 'case-msg').then(function (r) { after(r, '外しました'); });
+          } }),
+        ]),
+      ]);
+    }));
+    put(box, [
+      el('p', { class: 'sub', text: '方針を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。どの段からでも、選んで使えます。' }),
+      (c.materials || []).length ? list : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
+      addMaterialForm(),
+    ]);
+  }
+
+  function addMaterialForm() {
+    var kind = 'text';
+    var file = null, durationSec = 0;
+    var kinds = el('div', { class: 'kinds' }, ['text', 'audio', 'survey'].map(function (k) {
+      return el('label', {}, [el('input', { type: 'radio', name: 'm-kind', value: k, checked: k === kind, onchange: function () { kind = k; refresh(); } }), KIND_LABEL[k]]);
+    }));
+    var name = el('input', { maxlength: '100', placeholder: '例：ヒアリング①／事前アンケート' });
+    var date = el('input', { type: 'date', value: ymd(new Date()) });
+    var textArea = el('textarea', { id: 'm-text', rows: '6', placeholder: '打つ・声で入れる・貼り付ける' });
+    var fileInput = el('input', { type: 'file', hidden: true });
+    var fileInfo = el('div', { class: 'sub' });
+    var attendees = el('input', { maxlength: '300', placeholder: '例：山田社長、佐藤課長、鴨崎' });
+    var glossary = el('input', { maxlength: '1000', placeholder: '例：サロンワーク、ブルーカーボン' });
+    var driveUrl = el('input', { type: 'url', placeholder: 'https://docs.google.com/spreadsheets/d/…' });
+    var meter = el('div', {});
+    var progress = el('div', { class: 'progress', hidden: true }, [el('div', { class: 'meter' }, [meter]), el('p', { class: 'sub' })]);
+    var audioBox = el('div', {}, [
+      el('label', { class: 'field' }, ['参加者（任意。話した人の名前を当てやすくなる）', attendees]),
+      el('label', { class: 'field' }, ['用語（任意。固有名詞・専門用語の書き方）', glossary]),
+    ]);
+    var textBox = el('div', {}, [
+      el('label', { class: 'field' }, ['文を入れる', textArea]),
+      el('div', { class: 'row' }, [
+        el('button', { type: 'button', class: 'small proof', 'data-target': 'm-text', text: '誤変換を確かめる' }),
+        el('button', { type: 'button', class: 'primary', text: 'この文を入れる', onclick: addText }),
+      ]),
+    ]);
+    var surveyBox = el('div', {}, [
+      el('label', { class: 'field' }, ['Google フォームの回答などドライブのファイルなら、URL を貼る', driveUrl]),
+      el('div', { class: 'row' }, [el('button', { type: 'button', text: 'ドライブのファイルを入れる', onclick: addDrive })]),
+    ]);
+    var pick = el('button', { type: 'button', text: 'ファイルを選ぶ', onclick: function () { if (!state.uploading) { fileInput.value = ''; fileInput.click(); } } });
+    var send = el('button', { type: 'button', class: 'primary', text: 'ファイルを送る', disabled: true, onclick: sendFile });
+    var out = el('p', { class: 'msg' });
+
+    function refresh() {
+      audioBox.hidden = kind !== 'audio';
+      textBox.hidden = kind === 'audio';
+      surveyBox.hidden = kind !== 'survey';
+      fileInput.accept = kind === 'audio' ? 'audio/*,.m4a,.mp3,.wav,.aac,.ogg,.webm,.flac'
+        : '.docx,.doc,.xlsx,.xls,.pptx,.ppt,.pdf,.txt,.md,.csv,.tsv,.html,.htm,image/*';
+      pick.textContent = kind === 'audio' ? '録音のファイルを選ぶ' : 'ファイルを選ぶ（Word・Excel・PowerPoint・PDF・写真など）';
+      send.disabled = state.uploading || !file;
+    }
+
+    fileInput.addEventListener('change', function () {
+      file = fileInput.files && fileInput.files[0];
+      durationSec = 0;
+      if (!file) return refresh();
+      if (!name.value.trim()) name.value = file.name.replace(/\.[^.]+$/, '').slice(0, 100);
+      fileInfo.textContent = (kind === 'audio' ? '🎧 ' : '📄 ') + file.name + '（' + mb(file.size) + '）';
+      if (kind === 'audio') audioDuration(file).then(function (s) {
+        durationSec = Math.round(s);
+        if (s) fileInfo.textContent = '🎧 ' + file.name + '（' + mb(file.size) + '・' + Math.round(s / 60) + '分）';
+      });
+      refresh();
+    });
+
+    function addText() {
+      if (!textArea.value.trim()) { msg('', ''); out.textContent = '文を入れてください'; out.className = 'msg err'; return; }
+      call('addText', { caseId: state.c.id, kind: kind, name: name.value, date: date.value, text: textArea.value }, '入れています…', 'case-msg')
+        .then(function (r) { after(r, '材料に入れました'); });
+    }
+    function addDrive() {
+      call('addDriveFile', { caseId: state.c.id, kind: 'survey', name: name.value, date: date.value, url: driveUrl.value }, '受け付けています…', 'case-msg')
+        .then(function (r) { after(r, '受け付けました。文字にし終わると「文字にした」になります'); });
+    }
+    async function sendFile() {
+      if (!file || state.uploading) return;
+      state.uploading = true;
+      refresh();
+      keepAwake(true);
+      progress.hidden = false;
+      out.textContent = '送り終わるまで、この画面を開いたままにしてください。';
+      out.className = 'msg';
+      try {
+        var startRes = await api('uploadStart', {
+          caseId: state.c.id, kind: kind, name: name.value, date: date.value, fileName: file.name, mimeType: file.type || '',
+          size: file.size, durationSec: durationSec, attendees: attendees.value, glossary: glossary.value,
+        });
+        if (!startRes.ok) throw new Error(errText(startRes));
+        var offset = 0;
+        for (;;) {
+          var r = await sendChunk(startRes.uploadId, file, offset, startRes.chunkSize);
+          if (r.done) break;
+          offset = r.next;
+          meter.style.width = Math.round(100 * offset / file.size) + '%';
+          progress.lastChild.textContent = '送っています ' + Math.floor(100 * offset / file.size) + '%（' + mb(offset) + ' / ' + mb(file.size) + '）';
+        }
+        meter.style.width = '100%';
+        state.uploading = false;
+        keepAwake(false);
+        refreshCase(false).then(function () {
+          msg('case-msg', kind === 'audio' ? '受け付けました。文字起こしは裏で進みます（アプリを閉じても続きます）。終わると「文字にした」になります。' : '受け付けました。文字にし終わると「文字にした」になります。', 'ok');
+        });
+      } catch (e) {
+        progress.hidden = true;
+        out.textContent = '送れませんでした。もう一度「ファイルを送る」を押してください。\n' + errText(e);
+        out.className = 'msg err';
+      } finally {
+        state.uploading = false;
+        keepAwake(false);
+        refresh();
+      }
+    }
+
+    var form = el('div', { class: 'panel' }, [
+      el('h3', { text: '材料を入れる' }), kinds,
+      el('label', { class: 'field' }, ['名前', name]),
+      el('label', { class: 'field' }, ['日付（打ち合わせ・回答の日）', date]),
+      audioBox, textBox, surveyBox,
+      el('div', { class: 'row' }, [pick, fileInput]), fileInfo, progress, send, out,
+    ]);
+    refresh();
+    return form;
+  }
+
+  function openMaterial(m) {
+    call('getMaterial', { caseId: state.c.id, materialId: m.id }, '読み込んでいます…', 'case-msg').then(function (res) {
+      if (!res) return;
+      openDialog(m.name + '（' + KIND_LABEL[m.kind] + '）', '直すと、以降に作る・直す段でこの中身を使います。', res.text, function (text) {
+        return call('saveMaterial', { caseId: state.c.id, materialId: m.id, text: text }, '保存しています…', 'case-msg').then(function (r) { after(r, '材料を保存しました'); return !!r; });
+      });
+    });
+  }
+
+  /** 録音の長さを読む。読めない形式なら 0（そのときは GAS 側で数える） */
+  function audioDuration(file) {
+    return new Promise(function (resolve) {
+      var url = URL.createObjectURL(file);
+      var a = document.createElement('audio');
+      var settled = false;
+      function done(v) { if (settled) return; settled = true; URL.revokeObjectURL(url); resolve(v); }
+      a.preload = 'metadata';
+      a.onloadedmetadata = function () { done(isFinite(a.duration) && a.duration > 0 ? a.duration : 0); };
+      a.onerror = function () { done(0); };
+      setTimeout(function () { done(0); }, 8000);
+      a.src = url;
+    });
+  }
+
+  var wakeLock = null;
+  function keepAwake(on) {
+    try {
+      if (on && navigator.wakeLock) navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; }).catch(function () {});
+      if (!on && wakeLock) { wakeLock.release(); wakeLock = null; }
+    } catch (e) { /* 対応していない端末はそのまま */ }
+  }
+
+  /** 1つ分を送る。通信が切れたら、どこまで受け取ったかを聞いて続ける（議事録デスクと同じ） */
+  async function sendChunk(uploadId, file, offset, chunkSize) {
+    var lastErr = null;
+    for (var i = 0; i < CHUNK_TRIES; i++) {
+      try {
+        if (i > 0) {
+          await sleep(2000 * i);
+          var st = await api('uploadStatus', { uploadId: uploadId });
+          if (!st.ok) throw new Error(errText(st));
+          if (st.done || st.next !== offset) return st;
+        }
+        var data = await blobToBase64(file.slice(offset, Math.min(offset + chunkSize, file.size)));
+        var res = await api('uploadChunk', { uploadId: uploadId, offset: offset, data: data });
+        if (!res.ok) {
+          if (res.code === 'E004' || res.code === 'BAD_REQUEST') throw Object.assign(new Error(errText(res)), { fatal: true });
+          throw new Error(errText(res));
+        }
+        return res;
+      } catch (e) {
+        if (e.fatal || /ログインが必要/.test(e.message)) throw e;
+        lastErr = e;
+      }
+    }
+    throw lastErr;
+  }
+
+  // =========================
+  //  登録
+  // =========================
+  function renderReg() {
+    var c = state.c;
+    var org = c.org_type === 'municipality' ? 'municipality' : 'company';
+    var word = org === 'municipality' ? '自治体他' : '会社';
+    var company = el('input', { value: c.company, maxlength: '100' });
+    var source = el('input', { value: c.source, maxlength: '200' });
+    var memo = el('textarea', { rows: '4', value: c.memo || '' });
+    var refs = el('textarea', { rows: '2', value: (c.ref_urls || []).join('\n') });
+    var summary = el('textarea', { rows: '6', value: c.original_summary || '' });
+    var orgs = el('div', { class: 'radios' }, ['相談先',
+      el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'company', checked: org === 'company' }), ' 会社']),
+      el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'municipality', checked: org === 'municipality' }), ' 自治体他'])]);
+    [company, source, memo, refs, summary].forEach(function (x) { x.addEventListener('input', function () { state.dirty = true; }); });
+    put($('tab-reg'), [
+      el('div', { class: 'panel' }, [
+        el('div', { class: 'sub', text: '案件名：' + c.title + '／保存先：' + c.saveDir + (c.subdir ? '／' + c.subdir : '') }),
+        orgs,
+        el('label', { class: 'field' }, [word + '名（情報を調べるためだけに使う。分析のファイルには書かない）', company]),
+        el('label', { class: 'field' }, ['相談の出どころ', source]),
+        el('label', { class: 'field' }, ['議論のメモ（任意）', memo]),
+        el('label', { class: 'field' }, ['参照URL（1行に1つ。入れると、情報の取得はこのページだけを読む）', refs]),
+        el('label', { class: 'field' }, ['材料の要点（AIで整理。直してもよい）', summary]),
+        el('div', { class: 'row' }, [
+          el('button', { class: 'primary', text: '登録内容を保存', onclick: function () {
+            call('updateRegistration', {
+              caseId: c.id, company: company.value, source: source.value, memo: memo.value, ref_urls: refs.value, original_summary: summary.value,
+              org_type: document.querySelector('input[name="r-org"]:checked').value,
+            }, '保存しています…', 'case-msg').then(function (r) { if (r) after(r, (r.notes || []).join('\n') || '保存しました'); });
+          } }),
+          el('button', { text: '材料から要点を整理', onclick: function () {
+            call('summarize', { caseId: c.id }, '整理しています…', 'case-msg').then(function (r) { after(r, '要点を整理しました'); });
+          } }),
+        ]),
+      ]),
+      el('h3', { text: word + '情報' }),
+      c.company_info_stale ? el('div', { class: 'warn', text: '名前か種類を直した後、情報を取得し直していません。' }) : null,
+      c.companyError ? el('div', { class: 'errbox', text: c.companyError }) : null,
+      el('div', { class: 'row' }, [
+        el('button', { text: c.company_info ? '取得し直す' : word + '情報を取得', onclick: function () {
+          call('companyInfo', { caseId: c.id }, '受け付けています…', 'case-msg').then(function (r) { after(r, '受け付けました。1〜2分で取れます（裏で進みます）'); });
+        } }),
+        el('span', { class: 'sub', text: c.company_info_updated ? '取得 ' + hm(c.company_info_updated) : 'Google 検索で公開情報を集めます' }),
+      ]),
+      c.company_info ? el('div', { class: 'readonly', text: c.company_info }) : null,
+    ]);
+  }
+
+  // =========================
+  //  段（方針0〜2・方針3〜5・分析）
+  // =========================
+  function stepStatusText(s) {
+    if (!s.content) return 'まだ作っていません';
+    var by = s.by === 'desk' ? 'デスク（Claude）' : s.by === 'gemini' ? 'Gemini（' + (s.model || '') + '）' : '手で';
+    return [s.ok ? 'OK済み' : 'OK前', '作った・直した：' + by, s.updated ? '更新 ' + hm(s.updated) : ''].filter(String).join('｜');
+  }
+
+  function renderStepStatus() {
+    var s = state.c.steps[state.tab];
+    var box = $('step-status');
+    if (!box) return;
+    box.replaceChildren.apply(box, stepBadges(s));
+  }
+
+  function stepBadges(s) {
+    var out = [el('div', { class: 'status', text: stepStatusText(s) })];
+    var line = [];
+    if (s.running) line.push(el('span', { class: 'badge st-run', text: 'Gemini が作っています（裏で進みます）' }));
+    if (s.deskPending) line.push(el('span', { class: 'badge st-wait', text: 'デスクに依頼中（家のPCで「依頼を片づけて」）' }));
+    if (s.content && s.review === 'needed') line.push(el('span', { class: 'badge st-run', text: 'デスクのレビュー前' }));
+    if (s.stale) line.push(el('span', { class: 'badge st-err', text: '前の段か登録内容が変わった' }));
+    if (line.length) out.push(el('div', {}, line));
+    if (s.fallbackModel) out.push(el('div', { class: 'warn', text: '設定のモデルが使えないため、' + s.fallbackModel + ' で作りました。' }));
+    if (s.error) out.push(el('div', { class: 'errbox', text: s.error }));
+    return out;
+  }
+
+  function renderStep(step) {
+    var c = state.c;
+    var s = c.steps[step];
+    var box = $('tab-step');
+    var parts = [el('h2', { text: STEP_TAB[step] }), el('div', { id: 'step-status' }, stepBadges(s))];
+    (c.warnings || []).forEach(function (w) { parts.push(el('div', { class: 'warn', text: w })); });
+    var need = { s4: 's3', s5: 's4' }[step];
+    if (need && !c.steps[need].ok) parts.push(el('div', { class: 'warn', text: '先に「' + STEP_TAB[need] + '」をOKしてください（作る・直すは、前の段のOKの後にできます）' }));
+
+    var content = null, hearing = null;
+    if (s.content) {
+      content = el('textarea', { id: 'step-content', class: 'doc', value: s.content, oninput: function () { state.dirty = true; } });
+      parts.push(el('h3', { text: step === 's5' ? '分析' : step === 's3' ? '方針0〜2' : '方針（0〜5・付）' }), content);
+      if (step === 's3') {
+        parts.push(el('h3', { text: 'ヒアリング項目と回答' }));
+        hearing = hearingTable(s.items || []);
+        parts.push(hearing);
+        parts.push(el('div', { class: 'row' }, [
+          el('button', { text: '質問票（Word）を書き出す', onclick: function () {
+            if (state.dirty) { alert('先に「手で直した内容を保存」を押してください（質問票は保存した問いから作ります）'); return; }
+            call('questionnaire', { caseId: c.id }, '書き出しています…', 'case-msg').then(function (r) { after(r, '書き出しました。案件の上の「質問票（Word）」から開けます'); });
+          } }),
+          s.lastFill ? el('span', { class: 'sub', text: '材料から回答欄を埋めた：' + s.lastFill.filled + '問（' + hm(s.lastFill.time) + '）' }) : null,
+        ]));
+      }
+      if (step === 's5' && s.check) parts.push(el('h3', { text: '渡す前の点検' }), el('div', { class: 'readonly', text: s.check }));
+      if (s.next) parts.push(el('h3', { text: '次に聞くこと' }), el('div', { class: 'readonly', text: s.next }));
+      if (s.sorting) parts.push(el('details', {}, [el('summary', { text: 'デスクのレビュー（指摘と仕分け）' }), el('div', { class: 'readonly', text: s.sorting })]));
+      if (s.before && s.before.content) parts.push(el('details', {}, [el('summary', { text: '取り込む前の版（' + hm(s.before.time) + '）' }), el('div', { class: 'readonly', text: s.before.content })]));
+    } else {
+      parts.push(el('p', { class: 'sub', text: 'まだ作っていません。下で材料を選び、「Gemini で作る」か「デスクに頼む」を押してください。' }));
+    }
+
+    // デスクの版
+    var versions = ((c.desk && c.desk.versions) || []).filter(function (v) { return v.step === step; });
+    if (versions.length) {
+      parts.push(el('h3', { text: 'デスクの版（家のPCで作ったもの）' }));
+      parts.push(el('div', { class: 'list' }, versions.map(function (v) {
+        return el('div', { class: 'mat' }, [
+          el('div', { class: 'head' }, [el('span', { class: 'badge ' + (v.applied ? 'st-done' : 'st-run'), text: v.applied ? '取り込み済み' : '新しい版' }), el('span', { class: 'name', text: v.name })]),
+          v.applied ? null : el('div', { class: 'acts' }, [el('button', { class: 'small primary', text: 'デスクの版を取り込む', onclick: function () {
+            if (state.dirty && !confirm('保存していない直しがあります。デスクの版で置き換えますか？')) return;
+            if (!confirm('この段の中身を、デスクの版で置き換えます（今の中身は「取り込む前の版」に残ります）。よいですか？')) return;
+            call('applyDeskVersion', { caseId: c.id, fileId: v.fileId }, '取り込んでいます…', 'case-msg').then(function (r) { after(r, 'デスクの版を取り込みました'); });
+          } })]),
+        ]);
+      })));
+    }
+
+    // 材料・指示は本文の後に置き、ボタンの行だけを画面の下に固定する（スマホで本文が隠れないように）
+    parts = parts.concat(actionBar(step, content, hearing));
+    put(box, parts);
+    if (content) autosize(content);
+  }
+
+  window.addEventListener('resize', function () { var t = $('step-content'); if (t) autosize(t); });
+
+  /** ヒアリング項目の表（区分ごと。問い・回答・【要確認】・出どころ） */
+  function hearingTable(items) {
+    var groups = (state.cfg && state.cfg.groups) || [];
+    var table = el('table', { class: 'hearing', id: 'hearing' });
+    table.appendChild(el('tr', {}, [el('th', { text: '#' }), el('th', { text: '押さえる項目' }), el('th', { text: '回答' })]));
+    function row(it) {
+      var q = el('textarea', { class: 'item', value: it.item, oninput: function () { state.dirty = true; } });
+      var a = el('textarea', { class: 'ans', value: it.answer || '', oninput: function () { state.dirty = true; } });
+      var u = el('input', { type: 'checkbox', class: 'unk', checked: !!it.unknown, onchange: function () { state.dirty = true; } });
+      var tr = el('tr', {}, [
+        el('td', { class: 'no', text: String(it.no) }),
+        el('td', {}, [q, el('button', { class: 'link small', text: 'この問いを消す', onclick: function () { tr.remove(); state.dirty = true; } })]),
+        el('td', {}, [a, el('label', { class: 'unknown' }, [u, ' 【要確認】のまま']), it.source ? el('div', { class: 'src', text: '出どころ：' + it.source }) : null]),
+      ]);
+      tr.dataset.group = it.group || 'other';
+      tr.dataset.oral = it.oral ? '1' : '';
+      tr.dataset.manual = it.manual ? '1' : '';
+      tr.dataset.source = it.source || '';
+      return tr;
+    }
+    var written = items.filter(function (it) { return !it.oral; });
+    groups.concat([{ key: 'other', label: '区分なし' }]).forEach(function (g) {
+      var rows = written.filter(function (it) { return (g.key === 'other' ? groups.map(function (x) { return x.key; }).indexOf(it.group) < 0 : it.group === g.key); });
+      if (g.key === 'other' && !rows.length) return;
+      table.appendChild(el('tr', { class: 'grp' }, [el('th', { colspan: '3', text: g.label })]));
+      rows.forEach(function (it) { table.appendChild(row(it)); });
+      if (g.key !== 'other') {
+        var addRow = el('tr', {}, [el('td', { colspan: '3' }, [el('button', { class: 'link small', text: '＋ この区分に問いを足す', onclick: function () {
+          var tr = row({ no: '新', item: '', answer: '', group: g.key, manual: true });
+          addRow.parentNode.insertBefore(tr, addRow);
+          tr.querySelector('textarea').focus();
+          state.dirty = true;
+        } })])]);
+        table.appendChild(addRow);
+      }
+    });
+    var orals = items.filter(function (it) { return it.oral; });
+    if (orals.length) {
+      table.appendChild(el('tr', { class: 'grp' }, [el('th', { colspan: '3', text: (state.cfg && state.cfg.oralLabel) || '面談で口頭で聞く問い' })]));
+      orals.forEach(function (it) { table.appendChild(row(it)); });
+    }
+    return table;
+  }
+
+  function collectItems() {
+    var out = [];
+    document.querySelectorAll('#hearing tr').forEach(function (tr) {
+      var q = tr.querySelector('textarea.item');
+      if (!q) return;
+      out.push({
+        no: out.length + 1, item: q.value, answer: tr.querySelector('textarea.ans').value, unknown: tr.querySelector('input.unk').checked,
+        group: tr.dataset.group, oral: !!tr.dataset.oral, manual: !!tr.dataset.manual, source: tr.dataset.source,
+      });
+    });
+    return out;
+  }
+
+  function editBody(step) {
+    var body = { caseId: state.c.id, step: step };
+    var t = $('step-content');
+    if (t) body.content = t.value;
+    if (step === 's3' && $('hearing')) body.items = collectItems();
+    return body;
+  }
+
+  /** 段の下に固定する操作の行：材料を選ぶ・直しの指示・Gemini で作る／デスクに頼む・保存・OK */
+  function actionBar(step, content) {
+    var c = state.c;
+    var s = c.steps[step];
+    var mats = (c.materials || []).filter(function (m) { return m.status === 'done'; });
+    var picks = mats.map(function (m) {
+      return el('label', {}, [el('input', { type: 'checkbox', value: m.id, class: 'matpick-box' }), ' ' + KIND_LABEL[m.kind] + '：' + m.name]);
+    });
+    var instruction = el('textarea', { id: 'instruction', rows: '2', placeholder: s.content ? '直しの指示（例：目的の数字を月20時間に直して）。空なら選んだ材料で直す' : '作るときの注意（任意）' });
+    var mode = s.content ? 'revise' : 'make';
+    function chosen() { return Array.prototype.map.call(document.querySelectorAll('.matpick-box:checked'), function (x) { return x.value; }); }
+    function stepParams() { return { caseId: c.id, step: step, mode: mode, instruction: instruction.value, materialIds: chosen() }; }
+    function saveFirst() {
+      if (!state.dirty) return Promise.resolve(true);
+      return call('edit', editBody(step), '手で直した内容を保存しています…', 'case-msg').then(function (r) { if (r) { state.c = r.case; state.dirty = false; } return !!r; });
+    }
+    var okLabel = step === 's5' ? 'OKしてmdに保存' : 'OKして次へ';
+    var compose = el('div', { class: 'panel' }, [
+      el('h3', { text: s.content ? '材料・指示で直す' : '材料から作る' }),
+      mats.length ? el('div', { class: 'matpick' }, [el('span', { class: 'sub', text: '使う材料：' })].concat(picks)) : el('div', { class: 'sub', text: '材料がありません（「材料」タブで入れる）' }),
+      el('div', { class: 'row' }, [instruction]),
+      el('div', { class: 'row' }, [el('button', { class: 'small proof', 'data-target': 'instruction', text: '誤変換を確かめる' })]),
+      el('p', { class: 'sub', text: '外では「Gemini」（30秒〜1分）、家では「デスクに頼む」（家のPCの Claude Code が作る）を選びます。' }),
+    ]);
+    var bar = el('div', { class: 'actionbar' }, [
+      el('div', { class: 'row' }, [
+        el('button', { class: 'small primary', text: s.content ? 'Gemini で直す' : 'Gemini で作る', disabled: !!s.running, onclick: function () {
+          if (mode === 'revise' && !instruction.value.trim() && !chosen().length) { alert('直しの指示を書くか、使う材料を選んでください'); return; }
+          saveFirst().then(function (okSaved) {
+            if (!okSaved) return;
+            call('runStep', stepParams(), '受け付けています…', 'case-msg').then(function (r) { after(r, '受け付けました。Gemini が作っています（30秒〜1分ほど。裏で進みます）'); });
+          });
+        } }),
+        el('button', { class: 'small', text: 'デスクに頼む', onclick: function () {
+          saveFirst().then(function (okSaved) {
+            if (!okSaved) return;
+            call('requestDesk', stepParams(), '依頼を置いています…', 'case-msg').then(function (r) { after(r, 'デスクへの依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください'); });
+          });
+        } }),
+        s.content ? el('button', { class: 'small', text: '保存', title: '手で直した内容を保存', onclick: function () {
+          call('edit', editBody(step), '保存しています…', 'case-msg').then(function (r) { after(r, '保存しました'); });
+        } }) : null,
+        s.content ? el('button', { class: 'small primary', text: okLabel, onclick: function () {
+          if (s.review === 'needed' && !confirm('この段は「デスクのレビュー前」です。お客様に出す前にデスクのレビューを受けてください。このまま OK にしますか？')) return;
+          var body = editBody(step);
+          call('ok', body, 'OK にして md に書き出しています…', 'case-msg').then(function (r) {
+            if (!r) return;
+            var next = { s3: 's4', s4: 's5' }[step];
+            if (next) state.tab = next;
+            after(r, 'OK にして md に書き出しました');
+          });
+        } }) : null,
+      ].filter(Boolean)),
+    ]);
+    return [compose, bar];
+  }
+
+  // =========================
+  //  誤変換の確かめ・文を見る窓
+  // =========================
+  var dlgSave = null;
+  function openDialog(title, note, text, onSave) {
+    $('dlg-title').textContent = title;
+    $('dlg-note').textContent = note || '';
+    $('dlg-text').value = text || '';
+    dlgSave = onSave;
+    $('dlg-ok').hidden = !onSave;
+    $('dlg').showModal();
+  }
+  $('dlg-cancel').addEventListener('click', function () { $('dlg').close(); });
+  $('dlg-ok').addEventListener('click', function () {
+    if (!dlgSave) return;
+    Promise.resolve(dlgSave($('dlg-text').value)).then(function (done) { if (done !== false) $('dlg').close(); });
+  });
+
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('button.proof');
+    if (!b) return;
+    e.preventDefault();
+    var target = $(b.dataset.target);
+    if (!target || !target.value.trim()) { alert('確かめる文がありません'); return; }
+    call('proofread', { text: target.value }, '誤変換を確かめています…', null).then(function (r) {
+      if (!r) return;
+      var note = r.changes.length ? '直した箇所：' + r.changes.map(function (x) { return x.from + '→' + x.to; }).join('、') : '誤変換は見つかりませんでした';
+      openDialog('誤変換を確かめた文', note + '（「反映する」で元の欄に入れます）', r.text, function (text) {
+        target.value = text;
+        target.dispatchEvent(new Event('input'));
+        return true;
+      });
+      $('dlg-ok').textContent = '反映する';
+    });
+  });
+  $('dlg').addEventListener('close', function () { $('dlg-ok').textContent = '保存する'; });
+
+  // =========================
+  //  起動
+  // =========================
+  if ('serviceWorker' in navigator && !IS_LOCAL) navigator.serviceWorker.register('sw.js').catch(function () {});
+  start();
+})();
