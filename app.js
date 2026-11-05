@@ -311,7 +311,9 @@
       if (!res) return;
       $('new-form').reset();
       $('new-form').hidden = true;
-      openCase(res.case.id, 'mat');
+      openCase(res.case.id, 'mat').then(function () {
+        msg('case-msg', '登録しました。会社情報の取得を始めています（1〜2分。裏で進むので、そのまま材料を入れて構いません）。', 'ok');
+      });
     });
   });
 
@@ -341,7 +343,7 @@
     state.dirty = false;
     if (tab) state.tab = tab;
     show('case');
-    refreshCase(false);
+    return refreshCase(false);
   }
 
   /** 案件を読み直す。quiet＝処理の進み具合を見るための読み直し（直している途中の段は描き直さない） */
