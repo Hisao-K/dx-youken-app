@@ -1576,11 +1576,20 @@
     return pptx;
   }
 
+  /**
+   * 書き出すファイルの名前の最後に付ける「_会社名_日付」（2026-11-06 久夫さん指示：同じ日に別の案件で作ると同じ名前になるため）。
+   * ファイル名に使えない文字は除く。表紙・本文には会社名を入れない決まりはそのまま
+   */
+  function fileTail() {
+    var d = new Date();
+    var co = String((state.c && state.c.company) || '').replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+    return (co ? '_' + co : '') + '_' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);
+  }
+
   function exportPptx(text) {
     busy('パワポを作っています…');
     loadScript(PPTX_LIB).then(function () {
-      var d = new Date();
-      var name = 'DX要件分析_' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2) + '.pptx';
+      var name = 'DX要件分析' + fileTail() + '.pptx';
       return buildPptx(text).writeFile({ fileName: name }).then(function () {
         idle();
         msg('case-msg', 'パワポを書き出しました（' + name + '）。ダウンロードの場所を見てください', 'ok');
@@ -1719,8 +1728,7 @@
     document.body.appendChild(root);
     document.body.classList.add('printing');
     var oldTitle = document.title;
-    var d = new Date();
-    document.title = 'DX要件_目的・課題と対策_' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);   // 「PDFに保存」のときのファイル名になる
+    document.title = 'DX要件_目的・課題と対策' + fileTail();   // 「PDFに保存」のときのファイル名になる（最後に会社名と日付）
     var cleanup = function () {
       window.removeEventListener('afterprint', cleanup);
       document.title = oldTitle;
