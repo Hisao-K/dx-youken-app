@@ -278,3 +278,8 @@ table.strat th { background: var(--panel); white-space: nowrap; }
 .pr-prio-l { background: #eee; color: #555; }
 .pr-table .pr-mid { width: 17%; }
 .pr-table th.pr-narrow { white-space: normal; min-width: 5.6em; }
+
+/* 効果のイメージ図（2026-11-08） */
+.visual-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 8px 0; }
+.visual-fig { margin: 0; }
+.visual-img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid rgba(0, 0, 0, .12); background: #fff; min-height: 60px; }

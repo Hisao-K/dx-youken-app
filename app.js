@@ -393,7 +393,7 @@
   function renderHead() {
     var c = state.c;
     var jobs = (c.jobs || []).map(function (j) {
-      return j.type === 'transcribe' ? '文字起こし' : j.type === 'extract' ? 'ファイルの読み取り' : j.type === 'company' ? '会社情報の取得' : STEP_TAB[j.step] + 'を作成';
+      return j.type === 'transcribe' ? '文字起こし' : j.type === 'extract' ? 'ファイルの読み取り' : j.type === 'company' ? '会社情報の取得' : j.type === 'visual' ? '効果のイメージ図' : STEP_TAB[j.step] + 'を作成';
     });
     put($('case-head'), [
       el('div', { class: 'sub', text: c.company + '｜' + c.source }),
@@ -1228,6 +1228,50 @@
     ]);
   }
 
+  /**
+   * 効果のイメージ図（2026-11-08 久夫さん指示）。対策の表から「今」と「対策後」の2枚の絵を Gemini に描かせる。
+   * 絵は案件フォルダに入り、パワポではエグゼクティブサマリの次に入る。
+   */
+  var VISUAL_PHASE = { plan: '図に入れる文字を決めています', img1: '1枚目（今）を描いています', img2: '2枚目（対策後）を描いています' };
+  function loadVisual(caseId, i, fileId) {
+    state.visualCache = state.visualCache || {};
+    if (!state.visualCache[fileId]) {
+      state.visualCache[fileId] = api('getVisual', { caseId: caseId, index: i }).then(function (r) {
+        if (!r.ok) throw new Error(errText(r));
+        return 'data:' + r.mimeType + ';base64,' + r.data;
+      });
+      state.visualCache[fileId].catch(function () { delete state.visualCache[fileId]; });
+    }
+    return state.visualCache[fileId];
+  }
+  function visualPanel(c) {
+    var v = c.visual || {};
+    var s4 = c.steps.s4;
+    var making = (c.jobs || []).some(function (j) { return j.type === 'visual'; });
+    var imgs = v.images || [];
+    var stale = imgs.length && s4.updated && v.updated && String(s4.updated) > String(v.updated);
+    var btn = making ? null : el('button', { class: 'small', text: imgs.length ? '作り直す' : 'イメージ図を作る', onclick: function () {
+      if (!s4.content) { alert('先に「対策」を作ってください（図は対策の表から作ります）'); return; }
+      if (imgs.length && !confirm('作り直しますか？ 今の2枚はドライブのゴミ箱に移ります')) return;
+      call('runVisual', { caseId: c.id }, '頼んでいます…', 'case-msg').then(function (r) { after(r, '効果のイメージ図を作り始めました（2〜3分。裏で進みます）'); });
+    } });
+    var figs = imgs.map(function (im, i) {
+      var img = el('img', { class: 'visual-img', alt: i === 0 ? '今の業務と情報源' : '対策後' });
+      var cap = el('figcaption', { class: 'sub', text: im.name });
+      loadVisual(c.id, i, im.fileId).then(function (src) { img.src = src; }, function (e) { cap.textContent = im.name + '（読み込めませんでした：' + e.message + '）'; });
+      return el('figure', { class: 'visual-fig' }, [img, cap]);
+    });
+    return el('div', { class: 'panel' }, [
+      el('h3', { text: '効果のイメージ図（今／対策後の2枚）' }),
+      el('p', { class: 'sub', text: '対策の表から、今の業務と課題・対策後の姿を2枚の絵にします（Gemini の画像生成。2〜3分）。文字も Gemini が描くので、誤字や抜けがないか確かめてください。絵は案件フォルダに入り、パワポではエグゼクティブサマリの次に入ります。' }),
+      making ? el('div', { class: 'warn', text: '作っています：' + (VISUAL_PHASE[v.phase] || '準備しています') + '（終わると自動で表示が変わります）' }) : null,
+      v.error ? el('div', { class: 'errbox', text: v.error }) : null,
+      stale ? el('div', { class: 'warn', text: '図を作った後に対策が変わっています。必要なら作り直してください。' }) : null,
+      figs.length ? el('div', { class: 'visual-grid' }, figs) : null,
+      btn ? el('div', { class: 'row' }, [btn]) : null,
+    ]);
+  }
+
   function renderStep(step) {
     var c = state.c;
     var s = c.steps[step];
@@ -1238,6 +1282,7 @@
     if (need && !c.steps[need].ok) parts.push(el('div', { class: 'warn', text: '先に「' + STEP_TAB[need] + '」をOKしてください（作る・直すは、前の段のOKの後にできます）' }));
     if (s.proposal) parts.push(proposalPanel(step));
     if (step === 's3' || step === 's4') parts.push(stepMaterials(step));
+    if (step === 's5') parts.push(visualPanel(c));
 
     var content = null, hearing = null;
     if (s.content) {
@@ -1493,7 +1538,7 @@
     });
   }
 
-  function buildPptx(text) {
+  function buildPptx(text, images) {
     var ORANGE = 'E7741D', INK = '222222', FONT = 'Meiryo';
     var pptx = new window.PptxGenJS();
     pptx.layout = 'LAYOUT_WIDE';   // 13.33 × 7.5 インチ
@@ -1515,9 +1560,24 @@
     // 1行の高さ（インチ）と、1行に入る全角の文字数のおおよそ（14pt・幅12.3インチ）
     var LH = 0.3, PER_LINE = 60;
     var linesOf = function (t) { return t.split('\n').reduce(function (n, l) { return n + Math.max(1, Math.ceil(l.length / PER_LINE)); }, 0); };
-    splitChapters(text).forEach(function (ch) {
+    // 効果のイメージ図（2026-11-08）：エグゼクティブサマリ（0.）の次に、1枚ずつ全面に置く。0. がなければ表紙の次
+    images = images || [];
+    var imagesPut = !images.length;
+    var putImages = function () {
+      if (imagesPut) return;
+      imagesPut = true;
+      images.forEach(function (src) {
+        var s = pptx.addSlide();
+        s.background = { color: 'FFFFFF' };
+        s.addImage({ data: String(src).replace(/^data:/, ''), x: 0, y: 0, w: W, h: 7.5 });
+      });
+    };
+    var chs = splitChapters(text);
+    if (!chs.some(function (ch) { return /^0\s*[.．]/.test(chapterTitleOf(ch.lines)); })) putImages();
+    chs.forEach(function (ch) {
       var title = chapterTitleOf(ch.lines);
       if (!title) return;
+      if (!imagesPut && !/^0\s*[.．]/.test(title)) putImages();
       var sl = newSlide(title, false), y = TOP;
       // 高さ h の物を置く前に、入らなければ新しいスライド（「続き」）に移る
       var room = function (h) { if (!sl || y + h > BOTTOM) { sl = newSlide(title, true); y = TOP; } };
@@ -1573,6 +1633,7 @@
         }
       });
     });
+    putImages();
     return pptx;
   }
 
@@ -1586,17 +1647,26 @@
     return (co ? '_' + co : '') + '_' + d.getFullYear() + ('0' + (d.getMonth() + 1)).slice(-2) + ('0' + d.getDate()).slice(-2);
   }
 
+  /** 記載もと（「（事前アンケート、録音 [01:10]）」「（ヒアリング回答 #14）」など出どころの括弧）を外す（2026-11-08 久夫さん指示：パワポには不要） */
+  function dropSources(text) {
+    return String(text || '').replace(/[ 　]?[（(][^（）()\n]*?(アンケート|録音|回答 ?#|質問票|ヒアリング(の)?回答|会社情報|相談文)[^（）()\n]*?[）)]/g, '');
+  }
+
   function exportPptx(text) {
+    text = dropSources(text);
     busy('パワポを作っています…');
-    loadScript(PPTX_LIB).then(function () {
+    // 効果のイメージ図があれば一緒に入れる（2026-11-08）
+    var c = state.c, imgs = (c && c.visual && c.visual.images) || [];
+    var withImages = imgs.length && !(c.jobs || []).some(function (j) { return j.type === 'visual'; });
+    Promise.all([loadScript(PPTX_LIB)].concat(withImages ? imgs.map(function (im, i) { return loadVisual(c.id, i, im.fileId); }) : [])).then(function (got) {
       var name = 'DX要件分析' + fileTail() + '.pptx';
-      return buildPptx(text).writeFile({ fileName: name }).then(function () {
+      return buildPptx(text, got.slice(1)).writeFile({ fileName: name }).then(function () {
         idle();
         msg('case-msg', 'パワポを書き出しました（' + name + '）。ダウンロードの場所を見てください', 'ok');
       });
     }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
   }
-  window.DXY_buildPptx = function (text) { return loadScript(PPTX_LIB).then(function () { return buildPptx(text); }); };   // 動作確認用
+  window.DXY_buildPptx = function (text, images) { return loadScript(PPTX_LIB).then(function () { return buildPptx(text, images); }); };   // 動作確認用
 
   /**
    * 対策タブの「PDFに出力」（2026-11-06 久夫さん指示）。方針0〜5を、打ち合わせで見ながら話せる A4 縦の資料に組み、
@@ -1637,7 +1707,8 @@
         if (/優先/.test(h) && /^(高|中|低)$/.test(v)) {
           td.appendChild(el('span', { class: 'pr-prio pr-prio-' + { 高: 'h', 中: 'm', 低: 'l' }[v], text: v }));
         } else {
-          v.split('\n').forEach(function (line) {
+          // 【事例からの案】の行は PDF に載せない（2026-11-08 久夫さん指示。社内の検討用で、アプリの対策タブには残す）
+          v.split('\n').filter(function (line) { return !/^\s*(【事例からの案】|事例からの案：)/.test(line); }).forEach(function (line) {
             // 「対策例：」「事例からの案：」「Todo：」のような行の頭の名前は太字にする
             var m = line.match(/^([^：。、\s]{1,8})：([\s\S]*)$/);
             td.appendChild(el('div', { class: 'pr-cell-line' }, m ? [el('strong', { text: m[1] + '：' })].concat(printInline(m[2])) : printInline(line)));
@@ -1691,12 +1762,27 @@
     return out;
   }
 
+  /** 補足の「参考にした事例の同じ点・違う点」とその下の行を外す（表の【事例からの案】を PDF に載せないのに合わせる。2026-11-08） */
+  function dropCaseNotes(lines) {
+    var out = [], skip = -1;
+    lines.forEach(function (l) {
+      var ind = (l.match(/^\s*/)[0] || '').replace(/\t/g, '  ').length;
+      if (skip >= 0) {
+        if (!/^\s*$/.test(l) && ind > skip) return;
+        skip = -1;
+      }
+      if (/^\s*[-*・]\s*参考にした事例/.test(l)) { skip = ind; return; }
+      out.push(l);
+    });
+    return out;
+  }
+
   /** 方針0〜5の節だけを取り出す（付・ほかの節は入れない） */
   function printSections(text) {
     return splitChapters(String(text || '').replace(/\r/g, '')).map(function (ch) {
       var title = chapterTitleOf(ch.lines);
       var m = title.match(/^(\d+)\s*[.．]\s*(.*)$/);
-      return m && PRINT_NOS.indexOf(m[1]) >= 0 ? { no: m[1], name: m[2], lines: ch.lines.filter(function (l) { return !/^##\s/.test(l); }) } : null;
+      return m && PRINT_NOS.indexOf(m[1]) >= 0 ? { no: m[1], name: m[2], lines: dropCaseNotes(ch.lines.filter(function (l) { return !/^##\s/.test(l); })) } : null;
     }).filter(Boolean);
   }
 
