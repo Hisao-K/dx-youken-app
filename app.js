@@ -1560,29 +1560,49 @@
     // 1行の高さ（インチ）と、1行に入る全角の文字数のおおよそ（14pt・幅12.3インチ）
     var LH = 0.3, PER_LINE = 60;
     var linesOf = function (t) { return t.split('\n').reduce(function (n, l) { return n + Math.max(1, Math.ceil(l.length / PER_LINE)); }, 0); };
-    // 効果のイメージ図（2026-11-08）：エグゼクティブサマリ（0.）の次に、1枚ずつ全面に置く。0. がなければ表紙の次
+    // 効果のイメージ図（2026-11-08 久夫さん指示）：エグゼクティブサマリ（0.）の中で
+    //   結論 → 図1（今）→「課題と対策の一覧」→ 図2（対策後）→「3.〜11.の要点」
+    // の順に、絵は1枚ずつ全面に置く。一覧・要点は新しいスライドから始める。0. がなければ表紙の次、小見出しがなければ 0. の後に置く
     images = images || [];
-    var imagesPut = !images.length;
-    var putImages = function () {
-      if (imagesPut) return;
-      imagesPut = true;
-      images.forEach(function (src) {
-        var s = pptx.addSlide();
-        s.background = { color: 'FFFFFF' };
-        s.addImage({ data: String(src).replace(/^data:/, ''), x: 0, y: 0, w: W, h: 7.5 });
-      });
+    var used = images.map(function () { return false; });
+    var putImage = function (i) {
+      if (i >= images.length || used[i]) return;
+      used[i] = true;
+      var s = pptx.addSlide();
+      s.background = { color: 'FFFFFF' };
+      s.addImage({ data: String(images[i]).replace(/^data:/, ''), x: 0, y: 0, w: W, h: 7.5 });
+    };
+    var putRest = function () { images.forEach(function (_, i) { putImage(i); }); };
+    var isZero = function (t) { return /^0\s*[.．]/.test(t); };
+    // 中表紙（2026-11-11 久夫さん指示）：表紙の次に「エグゼクティブサマリ」、1.〜の前に「分析の詳細」
+    var section = function (name, sub) {
+      var s = pptx.addSlide();
+      s.background = { color: 'FFFFFF' };
+      s.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 0.35, h: 7.5, fill: { color: ORANGE }, line: { color: ORANGE } });
+      s.addText(name, { x: 1.0, y: 2.9, w: W - 2.0, h: 1.0, fontFace: FONT, fontSize: 36, bold: true, color: INK });
+      s.addShape(pptx.ShapeType.line, { x: 1.0, y: 3.95, w: 4.0, h: 0, line: { color: ORANGE, width: 2 } });
+      if (sub) s.addText(sub, { x: 1.0, y: 4.1, w: W - 2.0, h: 0.6, fontFace: FONT, fontSize: 16, color: '666666' });
     };
     var chs = splitChapters(text);
-    if (!chs.some(function (ch) { return /^0\s*[.．]/.test(chapterTitleOf(ch.lines)); })) putImages();
+    var hasZero = chs.some(function (ch) { return isZero(chapterTitleOf(ch.lines)); });
+    var nums = chs.map(function (ch) { return (chapterTitleOf(ch.lines).match(/^(\d+)\s*[.．]/) || [])[1]; }).filter(function (n) { return n && n !== '0'; });
+    var detailDone = false;
+    if (!hasZero) putRest();
     chs.forEach(function (ch) {
       var title = chapterTitleOf(ch.lines);
       if (!title) return;
-      if (!imagesPut && !/^0\s*[.．]/.test(title)) putImages();
+      if (isZero(title)) section('エグゼクティブサマリ', '結論・課題と対策・各項目の要点');
+      if (!isZero(title)) {
+        putRest();
+        if (hasZero && !detailDone) { detailDone = true; section('分析の詳細', nums.length ? nums[0] + '.〜' + nums[nums.length - 1] + '. の各項目' : ''); }
+      }
       var sl = newSlide(title, false), y = TOP;
       // 高さ h の物を置く前に、入らなければ新しいスライド（「続き」）に移る
       var room = function (h) { if (!sl || y + h > BOTTOM) { sl = newSlide(title, true); y = TOP; } };
       mdParts(ch.lines.join('\n')).forEach(function (p) {
         if (p.type === 'h') {
+          if (isZero(title) && /課題と対策の一覧/.test(p.text)) { putImage(0); sl = null; }
+          else if (isZero(title) && /要点/.test(p.text)) { putImage(1); sl = null; }
           room(0.9);   // 見出しだけがスライドの最後に残らないよう、次の1〜2行分も見込む
           sl.addText(p.text, { x: X, y: y, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: ORANGE });
           y += 0.48;
@@ -1633,7 +1653,7 @@
         }
       });
     });
-    putImages();
+    putRest();
     return pptx;
   }
 
