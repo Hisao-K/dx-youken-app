@@ -1263,7 +1263,7 @@
     });
     return el('div', { class: 'panel' }, [
       el('h3', { text: '効果のイメージ図（今／対策後の2枚）' }),
-      el('p', { class: 'sub', text: '対策の表から、今の業務と課題・対策後の姿を2枚の絵にします（Gemini の画像生成。2〜3分）。文字も Gemini が描くので、誤字や抜けがないか確かめてください。絵は案件フォルダに入り、パワポではエグゼクティブサマリの次に入ります。' }),
+      el('p', { class: 'sub', text: '対策の表から、今の職場と対策後の職場を2枚の写真風の画像にします（Gemini の画像生成。2〜3分。文字は入れません）。写真は案件フォルダに入り、パワポでは写真の横に情報源と課題・対策のカードを載せます。' }),
       making ? el('div', { class: 'warn', text: '作っています：' + (VISUAL_PHASE[v.phase] || '準備しています') + '（終わると自動で表示が変わります）' }) : null,
       v.error ? el('div', { class: 'errbox', text: v.error }) : null,
       stale ? el('div', { class: 'warn', text: '図を作った後に対策が変わっています。必要なら作り直してください。' }) : null,
@@ -1538,7 +1538,7 @@
     });
   }
 
-  function buildPptx(text, images) {
+  function buildPptx(text, images, plan) {
     var ORANGE = 'E7741D', INK = '222222', FONT = 'Meiryo';
     var pptx = new window.PptxGenJS();
     pptx.layout = 'LAYOUT_WIDE';   // 13.33 × 7.5 インチ
@@ -1565,12 +1565,62 @@
     // の順に、絵は1枚ずつ全面に置く。一覧・要点は新しいスライドから始める。0. がなければ表紙の次、小見出しがなければ 0. の後に置く
     images = images || [];
     var used = images.map(function () { return false; });
+    var GREEN = '2E7D5B', GTINT = 'E8F4EE', LIGHT = 'F4F5F7', NAVY = '2F3C5A';
+    // 2026-11-12 よろず支援拠点の助言：絵は写真にし、カードの文字は写真の横に図形で載せる（plan があるとき）。plan がない古い絵は1枚まるごと
     var putImage = function (i) {
       if (i >= images.length || used[i]) return;
       used[i] = true;
-      var s = pptx.addSlide();
-      s.background = { color: 'FFFFFF' };
-      s.addImage({ data: String(images[i]).replace(/^data:/, ''), x: 0, y: 0, w: W, h: 7.5 });
+      var data = String(images[i]).replace(/^data:/, '');
+      var side = plan && (i === 0 ? plan.before : plan.after);
+      if (!side || !(side.cards || []).length) {
+        var s0 = pptx.addSlide();
+        s0.background = { color: 'FFFFFF' };
+        s0.addImage({ data: data, x: 0, y: 0, w: W, h: 7.5 });
+        return;
+      }
+      var s = newSlide('0. エグゼクティブサマリ', true);
+      var color = i === 0 ? ORANGE : GREEN;
+      var sub = i === 0 ? '今：業務の情報源と仕事の回り方' : '対策後：' + String((plan.after && plan.after.tool) || '').replace(/（.*$/, '') + ' を社内の知恵袋にする';
+      s.addText(sub, { x: X, y: 1.1, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: ORANGE });
+      s.addImage({ data: data, x: X, y: 1.62, w: 5.6, h: 3.75, sizing: { type: 'cover', w: 5.6, h: 3.75 } });
+      s.addText(i === 0 ? '情報源' : '登録する資料', { x: X, y: 5.42, w: 5.6, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: ORANGE });
+      (side.sources || []).slice(0, 4).forEach(function (src, k) {
+        s.addText(src, { x: X + (k % 2) * 2.85, y: 5.78 + Math.floor(k / 2) * 0.5, w: 2.75, h: 0.42, fontFace: FONT, fontSize: 12, color: INK, align: 'center', valign: 'middle',
+          shape: pptx.ShapeType.roundRect, rectRadius: 0.06, fill: { color: i === 0 ? LIGHT : GTINT } });
+      });
+      var cards = side.cards || [], n = cards.length, ch = Math.min(0.62, (4.3 - 0.1 * n) / n), gap = Math.min(0.1, ch * 0.15);
+      cards.forEach(function (cd, k) {
+        var y = 1.62 + k * (ch + gap);
+        s.addShape(pptx.ShapeType.roundRect, { x: 6.45, y: y, w: 6.38, h: ch, rectRadius: 0.06, fill: { color: 'FFFFFF' }, line: { color: 'BBBBBB', width: 0.75 } });
+        s.addText(String(k + 1), { x: 6.55, y: y + (ch - 0.42) / 2, w: 0.42, h: 0.42, shape: pptx.ShapeType.ellipse, fill: { color: color }, fontFace: FONT, fontSize: 13, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0 });
+        s.addText([{ text: cd.biz + '：', options: { bold: true } }, { text: cd.text }], { x: 7.1, y: y, w: 5.65, h: ch, fontFace: FONT, fontSize: 13, color: INK, valign: 'middle' });
+      });
+      if (side.band) s.addText(side.band, { x: 6.45, y: 6.1, w: 6.38, h: 0.6, shape: pptx.ShapeType.roundRect, rectRadius: 0.06, fill: { color: i === 0 ? NAVY : GREEN },
+        fontFace: FONT, fontSize: 14, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle' });
+    };
+    // 「- 当社の支援：〜」の行は、緑の囲みにする（2026-11-12：当社のサービスを随所に入れる）
+    var supportBox = function (sl, y, line) {
+      var body = line.replace(/^[-・*]\s*当社の支援[：:]\s*/, '');
+      var h = Math.max(0.7, Math.ceil(body.length / 52) * 0.3 + 0.45);
+      sl.addShape(pptx.ShapeType.roundRect, { x: X, y: y, w: CW, h: h, rectRadius: 0.06, fill: { color: GTINT }, line: { color: GREEN, width: 1 } });
+      sl.addText([{ text: "Kamo's BASE がご支援できること", options: { bold: true, color: GREEN, breakLine: true } }, { text: body }],
+        { x: X + 0.15, y: y + 0.05, w: CW - 0.3, h: h - 0.1, fontFace: FONT, fontSize: 13, color: INK, valign: 'top' });
+      return h;
+    };
+    // 要点（「- 3. 組織・人：〜」の行）は、番号つきのカードを2列に並べる
+    var pointCards = function (sl, y, lines) {
+      var rows = Math.ceil(lines.length / 2), ch = Math.min(1.1, (BOTTOM - y) / rows - 0.12);
+      lines.forEach(function (l, k) {
+        var m = l.replace(/^[-・*]\s*/, '').match(/^(\d+)\s*[.．]\s*([^：:]+)[：:]\s*([\s\S]*)$/);
+        var x = X + (k % 2) * 6.25, yy = y + Math.floor(k / 2) * (ch + 0.12);
+        sl.addShape(pptx.ShapeType.roundRect, { x: x, y: yy, w: 6.05, h: ch, rectRadius: 0.06, fill: { color: LIGHT }, line: { color: LIGHT } });
+        if (m) {
+          sl.addText(m[1], { x: x + 0.15, y: yy + (ch - 0.56) / 2, w: 0.56, h: 0.56, shape: pptx.ShapeType.ellipse, fill: { color: ORANGE }, fontFace: FONT, fontSize: 14, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0 });
+          sl.addText([{ text: m[2], options: { bold: true, fontSize: 14, breakLine: true } }, { text: m[3], options: { fontSize: 12 } }], { x: x + 0.85, y: yy, w: 5.1, h: ch, fontFace: FONT, color: INK, valign: 'middle' });
+        } else {
+          sl.addText(l.replace(/^[-・*]\s*/, ''), { x: x + 0.2, y: yy, w: 5.7, h: ch, fontFace: FONT, fontSize: 12, color: INK, valign: 'middle' });
+        }
+      });
     };
     var putRest = function () { images.forEach(function (_, i) { putImage(i); }); };
     var isZero = function (t) { return /^0\s*[.．]/.test(t); };
@@ -1591,7 +1641,7 @@
     chs.forEach(function (ch) {
       var title = chapterTitleOf(ch.lines);
       if (!title) return;
-      if (isZero(title)) section('エグゼクティブサマリ', '結論・課題と対策・各項目の要点');
+      if (isZero(title)) section('エグゼクティブサマリ', '結論・今と対策後・目標の根拠・費用と効果・各項目の要点');
       if (!isZero(title)) {
         putRest();
         if (hasZero && !detailDone) { detailDone = true; section('分析の詳細', nums.length ? nums[0] + '.〜' + nums[nums.length - 1] + '. の各項目' : ''); }
@@ -1599,14 +1649,30 @@
       var sl = newSlide(title, false), y = TOP;
       // 高さ h の物を置く前に、入らなければ新しいスライド（「続き」）に移る
       var room = function (h) { if (!sl || y + h > BOTTOM) { sl = newSlide(title, true); y = TOP; } };
+      var lastH = '';
       mdParts(ch.lines.join('\n')).forEach(function (p) {
         if (p.type === 'h') {
+          lastH = p.text;
           if (isZero(title) && /課題と対策の一覧/.test(p.text)) { putImage(0); sl = null; }
-          else if (isZero(title) && /要点/.test(p.text)) { putImage(1); sl = null; }
+          // 写真2（対策後）は一覧の次。目標の根拠の節があればその前、なければ要点の前（2026-11-12）
+          else if (isZero(title) && /目標の根拠|要点/.test(p.text)) { putImage(1); sl = null; }
+          // 0. の小見出しは、それぞれ新しいスライドから（2026-11-12：費用と効果・要点などを1枚ずつ見せる）
+          else if (isZero(title) && y > TOP + 0.01) { sl = null; }
           room(0.9);   // 見出しだけがスライドの最後に残らないよう、次の1〜2行分も見込む
           sl.addText(p.text, { x: X, y: y, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: ORANGE });
           y += 0.48;
         } else if (p.type === 'text') {
+          var all = p.text.split('\n');
+          // 当社の支援の行は緑の囲みにして、本文から外す（2026-11-12）
+          var support = all.filter(function (l) { return /^[-・*]\s*当社の支援[：:]/.test(l); });
+          var bodyLines = all.filter(function (l) { return !/^[-・*]\s*当社の支援[：:]/.test(l); });
+          // 0. の要点は番号つきのカードに
+          if (isZero(title) && /要点/.test(lastH) && bodyLines.filter(function (l) { return /^[-・*]\s*\d+\s*[.．]/.test(l); }).length >= 3) {
+            room(3.0);
+            pointCards(sl, y, bodyLines.filter(function (l) { return l.trim(); }));
+            y = BOTTOM;
+            bodyLines = [];
+          }
           // 長い文は、スライドに収まる行数ずつに分ける
           var chunk = [];
           var hOf = function (ls) { return linesOf(ls.join('\n')) * LH + 0.1; };
@@ -1618,7 +1684,7 @@
             y += h + 0.1;
             chunk = [];
           };
-          p.text.split('\n').forEach(function (l) {
+          bodyLines.forEach(function (l) {
             if (sl && y + hOf(chunk.concat([l])) > BOTTOM) {
               flush();                                   // 今のスライドに入る分を置く
               if (y + hOf([l]) > BOTTOM) { sl = newSlide(title, true); y = TOP; }   // 次の行からは新しいスライド
@@ -1626,6 +1692,11 @@
             chunk.push(l);
           });
           flush();
+          support.forEach(function (l) {
+            var est = Math.max(0.7, Math.ceil(l.length / 52) * 0.3 + 0.45);
+            room(est);
+            y += supportBox(sl, y, l) + 0.12;
+          });
         } else if (p.type === 'table') {
           var n = p.head.length, fs = n >= 5 ? 10 : 12;
           var rows = [p.head.map(function (h) { return { text: h, options: { bold: true, color: 'FFFFFF', fill: { color: ORANGE } } }; })]
@@ -1680,13 +1751,13 @@
     var withImages = imgs.length && !(c.jobs || []).some(function (j) { return j.type === 'visual'; });
     Promise.all([loadScript(PPTX_LIB)].concat(withImages ? imgs.map(function (im, i) { return loadVisual(c.id, i, im.fileId); }) : [])).then(function (got) {
       var name = 'DX要件分析' + fileTail() + '.pptx';
-      return buildPptx(text, got.slice(1)).writeFile({ fileName: name }).then(function () {
+      return buildPptx(text, got.slice(1), withImages ? c.visual.plan : null).writeFile({ fileName: name }).then(function () {
         idle();
         msg('case-msg', 'パワポを書き出しました（' + name + '）。ダウンロードの場所を見てください', 'ok');
       });
     }).catch(function (e) { idle(); msg('case-msg', errText(e), 'err'); });
   }
-  window.DXY_buildPptx = function (text, images) { return loadScript(PPTX_LIB).then(function () { return buildPptx(text, images); }); };   // 動作確認用
+  window.DXY_buildPptx = function (text, images, plan) { return loadScript(PPTX_LIB).then(function () { return buildPptx(text, images, plan); }); };   // 動作確認用
 
   /**
    * 対策タブの「PDFに出力」（2026-11-06 久夫さん指示）。方針0〜5を、打ち合わせで見ながら話せる A4 縦の資料に組み、
