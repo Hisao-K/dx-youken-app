@@ -1539,22 +1539,29 @@
   }
 
   function buildPptx(text, images, plan) {
+    // 色の決まり（2026-11-13 久夫さん指示）：オレンジは見出しの帯（ブランド）と Kamo's BASE の作業・支援費だけ。
+    // ほかは 紺＝御社と資料の基本（小見出し・表の見出し・改善後）、赤＝課題・原因、グレー＝今の流れ
     var ORANGE = 'E7741D', INK = '222222', FONT = 'Meiryo';
+    var NAVY = '2F3C5A', RED = 'B42318', GREY = '666666', KBT = 'FDF1E7', LRED = 'FBE9E7';
     var pptx = new window.PptxGenJS();
     pptx.layout = 'LAYOUT_WIDE';   // 13.33 × 7.5 インチ
     var W = 13.33, X = 0.5, CW = W - 1.0, TOP = 1.25, BOTTOM = 7.0;
     var today = new Date();
     var ymd = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
+    // 取り組みごとの提案の形（2026-11-13〜。「## 1. この提案で解決する課題」から始まる）か、前の形か
+    var isNew = /^##\s*\d+\s*[.．]\s*この提案で解決する課題/m.test(String(text || ''));
     // 表紙（分析のファイルには会社名を書かない決まりのため、表紙にも会社名は入れない）
     var cover = pptx.addSlide();
     cover.background = { color: 'FFFFFF' };
     cover.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: 0.25, fill: { color: ORANGE }, line: { color: ORANGE } });
-    cover.addText('DX要件分析', { x: X, y: 2.6, w: CW, h: 1.0, fontFace: FONT, fontSize: 40, bold: true, color: INK });
-    cover.addText(ymd + '　初回面談の前の仮説', { x: X, y: 3.7, w: CW, h: 0.6, fontFace: FONT, fontSize: 18, color: '666666' });
+    cover.addText(isNew ? 'DX改善のご提案' : 'DX要件分析', { x: X, y: 2.6, w: CW, h: 1.0, fontFace: FONT, fontSize: 40, bold: true, color: INK });
+    cover.addText(isNew ? ymd : ymd + '　初回面談の前の仮説', { x: X, y: 3.7, w: CW, h: 0.6, fontFace: FONT, fontSize: 18, color: '666666' });
     var newSlide = function (title, cont) {
       var sl = pptx.addSlide();
       sl.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: W, h: 0.95, fill: { color: ORANGE }, line: { color: ORANGE } });
-      sl.addText(title + (cont ? '（続き）' : ''), { x: X, y: 0.12, w: CW, h: 0.7, fontFace: FONT, fontSize: 24, bold: true, color: 'FFFFFF' });
+      var tt = title + (cont ? '（続き）' : '');
+      // 長い見出し（取り組みの名前など）は1行に収まるよう字を小さくする（2026-11-13）
+      sl.addText(tt, { x: X, y: 0.12, w: CW, h: 0.7, fontFace: FONT, fontSize: tt.length > 40 ? 17 : tt.length > 32 ? 20 : 24, bold: true, color: 'FFFFFF' });
       return sl;
     };
     // 1行の高さ（インチ）と、1行に入る全角の文字数のおおよそ（14pt・幅12.3インチ）
@@ -1565,7 +1572,7 @@
     // の順に、絵は1枚ずつ全面に置く。一覧・要点は新しいスライドから始める。0. がなければ表紙の次、小見出しがなければ 0. の後に置く
     images = images || [];
     var used = images.map(function () { return false; });
-    var GREEN = '2E7D5B', GTINT = 'E8F4EE', LIGHT = 'F4F5F7', NAVY = '2F3C5A';
+    var GTINT = 'E9ECF2', LIGHT = 'F4F5F7';   // 2026-11-13：緑はやめ、改善後は紺（薄い紺）
     // 2026-11-12 よろず支援拠点の助言：絵は写真にし、カードの文字は写真の横に図形で載せる（plan があるとき）。plan がない古い絵は1枚まるごと
     var putImage = function (i) {
       if (i >= images.length || used[i]) return;
@@ -1578,12 +1585,12 @@
         s0.addImage({ data: data, x: 0, y: 0, w: W, h: 7.5 });
         return;
       }
-      var s = newSlide('0. エグゼクティブサマリ', true);
-      var color = i === 0 ? ORANGE : GREEN;
+      var s = isNew ? newSlide(i === 0 ? '今の業務と情報源' : '対策後の姿', false) : newSlide('0. エグゼクティブサマリ', true);
+      var color = i === 0 ? GREY : NAVY;
       var sub = i === 0 ? '今：業務の情報源と仕事の回り方' : '対策後：' + String((plan.after && plan.after.tool) || '').replace(/（.*$/, '') + ' を社内の知恵袋にする';
-      s.addText(sub, { x: X, y: 1.1, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: ORANGE });
+      s.addText(sub, { x: X, y: 1.1, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: NAVY });
       s.addImage({ data: data, x: X, y: 1.62, w: 5.6, h: 3.75, sizing: { type: 'cover', w: 5.6, h: 3.75 } });
-      s.addText(i === 0 ? '情報源' : '登録する資料', { x: X, y: 5.42, w: 5.6, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: ORANGE });
+      s.addText(i === 0 ? '情報源' : '登録する資料', { x: X, y: 5.42, w: 5.6, h: 0.32, fontFace: FONT, fontSize: 13, bold: true, color: NAVY });
       (side.sources || []).slice(0, 4).forEach(function (src, k) {
         s.addText(src, { x: X + (k % 2) * 2.85, y: 5.78 + Math.floor(k / 2) * 0.5, w: 2.75, h: 0.42, fontFace: FONT, fontSize: 12, color: INK, align: 'center', valign: 'middle',
           shape: pptx.ShapeType.roundRect, rectRadius: 0.06, fill: { color: i === 0 ? LIGHT : GTINT } });
@@ -1595,17 +1602,54 @@
         s.addText(String(k + 1), { x: 6.55, y: y + (ch - 0.42) / 2, w: 0.42, h: 0.42, shape: pptx.ShapeType.ellipse, fill: { color: color }, fontFace: FONT, fontSize: 13, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0 });
         s.addText([{ text: cd.biz + '：', options: { bold: true } }, { text: cd.text }], { x: 7.1, y: y, w: 5.65, h: ch, fontFace: FONT, fontSize: 13, color: INK, valign: 'middle' });
       });
-      if (side.band) s.addText(side.band, { x: 6.45, y: 6.1, w: 6.38, h: 0.6, shape: pptx.ShapeType.roundRect, rectRadius: 0.06, fill: { color: i === 0 ? NAVY : GREEN },
+      if (side.band) s.addText(side.band, { x: 6.45, y: 6.1, w: 6.38, h: 0.6, shape: pptx.ShapeType.roundRect, rectRadius: 0.06, fill: { color: i === 0 ? RED : NAVY },
         fontFace: FONT, fontSize: 14, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle' });
     };
-    // 「- 当社の支援：〜」の行は、緑の囲みにする（2026-11-12：当社のサービスを随所に入れる）
+    // 「- 当社の支援：〜」の行は、囲みにする（2026-11-12：当社のサービスを随所に入れる。2026-11-13：当社の色＝オレンジに）
     var supportBox = function (sl, y, line) {
       var body = line.replace(/^[-・*]\s*当社の支援[：:]\s*/, '');
       var h = Math.max(0.7, Math.ceil(body.length / 52) * 0.3 + 0.45);
-      sl.addShape(pptx.ShapeType.roundRect, { x: X, y: y, w: CW, h: h, rectRadius: 0.06, fill: { color: GTINT }, line: { color: GREEN, width: 1 } });
-      sl.addText([{ text: "Kamo's BASE がご支援できること", options: { bold: true, color: GREEN, breakLine: true } }, { text: body }],
+      sl.addShape(pptx.ShapeType.roundRect, { x: X, y: y, w: CW, h: h, rectRadius: 0.06, fill: { color: KBT }, line: { color: ORANGE, width: 1 } });
+      sl.addText([{ text: "Kamo's BASE がご支援できること", options: { bold: true, color: ORANGE, breakLine: true } }, { text: body }],
         { x: X + 0.15, y: y + 0.05, w: CW - 0.3, h: h - 0.1, fontFace: FONT, fontSize: 13, color: INK, valign: 'top' });
       return h;
+    };
+    // 業務の流れ（「1. 工程｜担当｜中身｜課題1」の行）を矢羽根で描く（2026-11-13）。今の流れ＝グレー（課題の所に赤い枠）、改善後＝紺
+    var FLOW_RE = /^\s*\d+\s*[.．]\s*[^｜|\n]+[｜|]/;
+    var drawFlow = function (sl, y, lines, now) {
+      var steps = lines.map(function (l) {
+        var c = l.replace(/^\s*\d+\s*[.．]\s*/, '').split(/[｜|]/).map(function (s) { return s.trim(); });
+        var iss = (c.length > 1 && /^課題\s*[\d・,、 ]+$/.test(c[c.length - 1])) ? c.pop() : '';
+        return { name: c[0] || '', who: c[1] || '', det: c.slice(2).join('｜'), iss: iss };
+      });
+      var sw = CW / steps.length;
+      steps.forEach(function (s, i) {
+        var x = X + i * sw;
+        sl.addText(s.name, { x: x, y: y, w: sw + 0.05, h: 0.6, shape: i ? pptx.ShapeType.chevron : pptx.ShapeType.homePlate, fill: { color: now ? GREY : NAVY },
+          line: { color: now ? GREY : NAVY }, fontFace: FONT, fontSize: 11, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle' });
+        sl.addText(s.who, { x: x, y: y + 0.63, w: sw, h: 0.3, fontFace: FONT, fontSize: 10.5, bold: true, color: NAVY, align: 'center' });
+        if (now && s.det) {
+          var hot = !!s.iss;
+          sl.addText(s.det, { x: x + 0.06, y: y + 1.02, w: sw - 0.12, h: 1.0, shape: pptx.ShapeType.roundRect, rectRadius: 0.06, fill: { color: hot ? LRED : 'FFFFFF' },
+            line: { color: hot ? RED : 'BBBBBB', width: hot ? 1.5 : 0.75 }, fontFace: FONT, fontSize: 10.5, color: INK, align: 'center', valign: 'middle' });
+          if (hot) sl.addText(s.iss, { x: x + (sw - 0.9) / 2, y: y + 0.9, w: 0.9, h: 0.26, shape: pptx.ShapeType.roundRect, rectRadius: 0.04, fill: { color: RED },
+            line: { color: RED }, fontFace: FONT, fontSize: 9.5, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0 });
+        }
+      });
+      return now ? 2.1 : 1.0;
+    };
+    // 「- 課題1（所長の課題）：」は赤、「- 変わること：」「- 残るもの：」などは紺の太字にする
+    var LABEL_RE = /^([-・*]\s*)(課題\s*\d+[^：:\n]{0,20}|根っこの課題|最初は[^：:\n]{0,12}|変わること|残るもの|費用|御社の負担|終わりの条件|支援費の合計|効果の合計|回収の見込み)([：:])/;
+    var runsOf = function (ls) {
+      var out = [];
+      ls.forEach(function (l, k) {
+        var m = l.match(LABEL_RE), br = k < ls.length - 1;
+        if (m) {
+          out.push({ text: m[1] + m[2] + m[3], options: { bold: true, color: /^課題/.test(m[2]) ? RED : NAVY } });
+          out.push({ text: l.slice(m[0].length) || ' ', options: { breakLine: br } });
+        } else out.push({ text: l || ' ', options: { breakLine: br } });
+      });
+      return out;
     };
     // 要点（「- 3. 組織・人：〜」の行）は、番号つきのカードを2列に並べる
     var pointCards = function (sl, y, lines) {
@@ -1615,7 +1659,7 @@
         var x = X + (k % 2) * 6.25, yy = y + Math.floor(k / 2) * (ch + 0.12);
         sl.addShape(pptx.ShapeType.roundRect, { x: x, y: yy, w: 6.05, h: ch, rectRadius: 0.06, fill: { color: LIGHT }, line: { color: LIGHT } });
         if (m) {
-          sl.addText(m[1], { x: x + 0.15, y: yy + (ch - 0.56) / 2, w: 0.56, h: 0.56, shape: pptx.ShapeType.ellipse, fill: { color: ORANGE }, fontFace: FONT, fontSize: 14, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0 });
+          sl.addText(m[1], { x: x + 0.15, y: yy + (ch - 0.56) / 2, w: 0.56, h: 0.56, shape: pptx.ShapeType.ellipse, fill: { color: NAVY }, fontFace: FONT, fontSize: 14, bold: true, color: 'FFFFFF', align: 'center', valign: 'middle', margin: 0 });
           sl.addText([{ text: m[2], options: { bold: true, fontSize: 14, breakLine: true } }, { text: m[3], options: { fontSize: 12 } }], { x: x + 0.85, y: yy, w: 5.1, h: ch, fontFace: FONT, color: INK, valign: 'middle' });
         } else {
           sl.addText(l.replace(/^[-・*]\s*/, ''), { x: x + 0.2, y: yy, w: 5.7, h: ch, fontFace: FONT, fontSize: 12, color: INK, valign: 'middle' });
@@ -1637,12 +1681,14 @@
     var hasZero = chs.some(function (ch) { return isZero(chapterTitleOf(ch.lines)); });
     var nums = chs.map(function (ch) { return (chapterTitleOf(ch.lines).match(/^(\d+)\s*[.．]/) || [])[1]; }).filter(function (n) { return n && n !== '0'; });
     var detailDone = false;
-    if (!hasZero) putRest();
+    if (!hasZero && !isNew) putRest();
+    // 取り組みの節（と全体の前提）の ### ①②③ は、それぞれ新しいスライドから（2026-11-13）
+    var isActs = function (t) { return /^(取り組み|全体の前提)/.test(String(t).replace(/^\d+\s*[.．]\s*/, '')); };
     chs.forEach(function (ch) {
       var title = chapterTitleOf(ch.lines);
       if (!title) return;
-      if (isZero(title)) section('エグゼクティブサマリ', '結論・今と対策後・目標の根拠・費用と効果・各項目の要点');
-      if (!isZero(title)) {
+      if (!isNew && isZero(title)) section('エグゼクティブサマリ', '結論・今と対策後・目標の根拠・費用と効果・各項目の要点');
+      if (!isNew && !isZero(title)) {
         putRest();
         if (hasZero && !detailDone) { detailDone = true; section('分析の詳細', nums.length ? nums[0] + '.〜' + nums[nums.length - 1] + '. の各項目' : ''); }
       }
@@ -1658,8 +1704,9 @@
           else if (isZero(title) && /目標の根拠|要点/.test(p.text)) { putImage(1); sl = null; }
           // 0. の小見出しは、それぞれ新しいスライドから（2026-11-12：費用と効果・要点などを1枚ずつ見せる）
           else if (isZero(title) && y > TOP + 0.01) { sl = null; }
+          else if (isNew && isActs(title) && y > TOP + 0.01) { sl = null; }
           room(0.9);   // 見出しだけがスライドの最後に残らないよう、次の1〜2行分も見込む
-          sl.addText(p.text, { x: X, y: y, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: ORANGE });
+          sl.addText(p.text, { x: X, y: y, w: CW, h: 0.42, fontFace: FONT, fontSize: 16, bold: true, color: NAVY });
           y += 0.48;
         } else if (p.type === 'text') {
           var all = p.text.split('\n');
@@ -1673,6 +1720,14 @@
             y = BOTTOM;
             bodyLines = [];
           }
+          // 業務の流れの行（2行以上）は矢羽根の図に。①（今の流れ）か ②（改善後）かは、すぐ上の小見出しで決める
+          var flowLines = bodyLines.filter(function (l) { return FLOW_RE.test(l); });
+          if (flowLines.length >= 2) {
+            var now = !/②|改善/.test(lastH);
+            room(now ? 2.15 : 1.05);
+            y += drawFlow(sl, y, flowLines, now) + 0.12;
+            bodyLines = bodyLines.filter(function (l) { return !FLOW_RE.test(l); });
+          }
           // 長い文は、スライドに収まる行数ずつに分ける
           var chunk = [];
           var hOf = function (ls) { return linesOf(ls.join('\n')) * LH + 0.1; };
@@ -1680,7 +1735,7 @@
             if (!chunk.length) return;
             var h = hOf(chunk);
             room(h);
-            sl.addText(chunk.join('\n'), { x: X, y: y, w: CW, h: h, fontFace: FONT, fontSize: 14, color: INK, valign: 'top' });
+            sl.addText(runsOf(chunk), { x: X, y: y, w: CW, h: h, fontFace: FONT, fontSize: 14, color: INK, valign: 'top' });
             y += h + 0.1;
             chunk = [];
           };
@@ -1699,8 +1754,32 @@
           });
         } else if (p.type === 'table') {
           var n = p.head.length, fs = n >= 5 ? 10 : 12;
-          var rows = [p.head.map(function (h) { return { text: h, options: { bold: true, color: 'FFFFFF', fill: { color: ORANGE } } }; })]
-            .concat(p.rows.map(function (r) { return p.head.map(function (_, i) { return { text: r[i] || '' }; }); }));
+          // 表の色（2026-11-13）：見出しは紺。当社の支援費の表だけ見出しをオレンジに。当社の費用の列はオレンジの字、
+          // 担当の列は 当社＝オレンジ／御社＝紺／一緒＝紺の字に薄いオレンジの欄。原因は赤、優先度「高」は赤
+          var kbHead = /当社の支援費/.test(lastH);
+          var kind = p.head.map(function (h) {
+            return /当社の費用|当社のメニュー/.test(h) ? 'kb' : /^担当$/.test(h) ? 'who' : /^原因$/.test(h) ? 'cause' : /^優先度$/.test(h) ? 'pri' : '';
+          });
+          var cellOpt = function (k, t) {
+            if (k === 'kb') return { color: ORANGE, bold: true };
+            if (k === 'cause') return { color: RED };
+            if (k === 'pri') return /高/.test(t) ? { color: RED, bold: true } : {};
+            if (k === 'who') {
+              var kb = /当社/.test(t), cu = /社長|所長|若手|事務|技術|担当|社員|御社/.test(t.replace(/当社/g, ''));
+              if (kb && !cu) return { color: ORANGE, bold: true };
+              return kb ? { color: NAVY, bold: true, fill: { color: KBT } } : { color: NAVY, bold: true };
+            }
+            return {};
+          };
+          var rows = [p.head.map(function (h) { return { text: h, options: { bold: true, color: 'FFFFFF', fill: { color: kbHead ? ORANGE : NAVY } } }; })]
+            .concat(p.rows.map(function (r) { return p.head.map(function (_, i) { return { text: r[i] || '', options: cellOpt(kind[i], r[i] || '') }; }); }));
+          if (kind.indexOf('who') >= 0) {
+            room(0.9);
+            sl.addText([{ text: '担当の色：', options: { bold: true } }, { text: 'オレンジ＝当社　', options: { color: ORANGE, bold: true } },
+              { text: '紺＝御社　', options: { color: NAVY, bold: true } }, { text: '薄いオレンジの欄＝当社と御社が一緒に' }],
+              { x: X, y: y, w: CW, h: 0.28, fontFace: FONT, fontSize: 10, color: INK });
+            y += 0.32;
+          }
           // 文の長い列を広くする
           var len = p.head.map(function (h, i) { return Math.max(4, Math.min(60, p.rows.reduce(function (m, r) { return Math.max(m, String(r[i] || '').length); }, h.length))); });
           var sum = len.reduce(function (a, b) { return a + b; }, 0);
@@ -1723,6 +1802,9 @@
           else { sl = null; y = BOTTOM + 1; }   // 表が次のスライドへ続いたときは、表の後を新しいスライドから続ける
         }
       });
+      // 取り組みごとの形では、写真1（今）は「解決する課題」の後、写真2（対策後）は「課題と取り組みの対応」の後（2026-11-13）
+      if (isNew && /解決する課題/.test(title)) putImage(0);
+      if (isNew && /課題と取り組み/.test(title)) putImage(1);
     });
     putRest();
     return pptx;
