@@ -1550,6 +1550,11 @@
     var ymd = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
     // 取り組みごとの提案の形（2026-11-13〜。「## 1. この提案で解決する課題」から始まる）か、前の形か
     var isNew = /^##\s*\d+\s*[.．]\s*この提案で解決する課題/m.test(String(text || ''));
+    // 取り組みごとの形は、手で作った21枚の提案書と同じ見せ方で書き出す（proposal.js・2026-11-13 久夫さん指示）。
+    // 提案書は御社に渡すものなので、表紙に「会社名 御中」を入れる（前の形の分析には会社名を入れない決まりのまま）
+    // 表紙の差出人の名前は、ログイン中の Google アカウントの名前（公開リポジトリのプログラムに個人の名前を書かないため）
+    var me = state.idToken && decodeJwt(state.idToken);
+    if (isNew && window.DXY_buildProposal) return window.DXY_buildProposal(text, images, plan, { company: (state.c && state.c.company) || '', presenter: (me && me.name) || '' });
     // 表紙（分析のファイルには会社名を書かない決まりのため、表紙にも会社名は入れない）
     var cover = pptx.addSlide();
     cover.background = { color: 'FFFFFF' };
@@ -1832,7 +1837,8 @@
     var c = state.c, imgs = (c && c.visual && c.visual.images) || [];
     var withImages = imgs.length && !(c.jobs || []).some(function (j) { return j.type === 'visual'; });
     Promise.all([loadScript(PPTX_LIB)].concat(withImages ? imgs.map(function (im, i) { return loadVisual(c.id, i, im.fileId); }) : [])).then(function (got) {
-      var name = 'DX要件分析' + fileTail() + '.pptx';
+      var isNewForm = /^##\s*\d+\s*[.．]\s*この提案で解決する課題/m.test(String(text || ''));
+      var name = (isNewForm ? 'DX改善提案' : 'DX要件分析') + fileTail() + '.pptx';
       return buildPptx(text, got.slice(1), withImages ? c.visual.plan : null).writeFile({ fileName: name }).then(function () {
         idle();
         msg('case-msg', 'パワポを書き出しました（' + name + '）。ダウンロードの場所を見てください', 'ok');

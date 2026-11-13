@@ -2,11 +2,12 @@
 // 画面のファイル（HTML・JS・CSS・アイコン）だけを置いておき、電波が弱くてもアプリが開くようにする。
 // 案件のデータ（GAS とのやり取り）は別のサイトあてなので、ここでは扱わない・保存しない。
 // 画面を更新したら VERSION を上げる。消す置き場は dxy- で始まるものだけ（同じサイトにほかのアプリの置き場があるため）。
-const VERSION = 'dxy-v30';
+const VERSION = 'dxy-v31';
 const SHELL = [
   './',
   './index.html',
   './style.css',
+  './proposal.js',
   './app.js',
   './config.js',
   './manifest.webmanifest',
