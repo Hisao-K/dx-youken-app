@@ -1554,7 +1554,7 @@
     // 提案書は御社に渡すものなので、表紙に「会社名 御中」を入れる（前の形の分析には会社名を入れない決まりのまま）
     // 表紙の差出人の名前は、ログイン中の Google アカウントの名前（公開リポジトリのプログラムに個人の名前を書かないため）
     var me = state.idToken && decodeJwt(state.idToken);
-    if (isNew && window.DXY_buildProposal) return window.DXY_buildProposal(text, images, plan, { company: (state.c && state.c.company) || '', presenter: (me && me.name) || '' });
+    if (isNew && window.DXY_buildProposal) return window.DXY_buildProposal(text, images, plan, { company: (state.c && state.c.company) || '', presenter: (me && me.name) || '', visual: (state.c && state.c.visual) || null });
     // 表紙（分析のファイルには会社名を書かない決まりのため、表紙にも会社名は入れない）
     var cover = pptx.addSlide();
     cover.background = { color: 'FFFFFF' };
