@@ -15,8 +15,10 @@
  */
 (function (root) {
   'use strict';
-  var ORANGE = 'E7741D', NAVY = '2F3C5A', RED = 'B42318', GREY = '666666', INK = '222222', LINE = 'BBBBBB';
-  var LIGHT = 'F4F5F7', LNAVY = 'E9ECF2', LRED = 'FBE9E7', KBT = 'FDF1E7', WHITE = 'FFFFFF';
+  // 配色（2026-11-14 久夫さん「ちょっと暗い。洗練された配色に」）：濃い紺の塗りをやめ、明るい青（スチールブルー）を基本に、
+  // 白地を広く・枠は淡い青・帯は薄い面にして軽く見せる。オレンジ（ブランド・当社）と赤（課題）の決まりはそのまま
+  var ORANGE = 'E7741D', NAVY = '3A6EA5', NAVYD = '23466F', RED = 'C8463A', GREY = '6B7280', GFILL = 'A7AFBA', INK = '2B2F36', LINE = 'D3DAE3';
+  var LIGHT = 'F5F7FA', LNAVY = 'EBF2F9', CARDLINE = 'C5D5E8', LRED = 'FDEEEC', KBT = 'FDF1E7', WHITE = 'FFFFFF';
   var FONT = 'Meiryo', W = 13.33, H = 7.5;
   // 差出人（表紙）は屋号だけ（2026-11-14 久夫さん決定。個人の名前は入れない）
   var PRESENTER_SUB = 'DX推進・生成AI導入支援／経済産業省 DX認定事業者';
@@ -258,8 +260,9 @@
       h = h || 0.6;
       T(sl, 0.5, y, 12.33, h, [[["Kamo's BASE の支援　", { b: true, c: ORANGE }], [t, {}]]], 11.5, { fill: KBT, line: ORANGE, shape: S.roundRect, r: 0.06, valign: 'middle', margin: 6, min: 8 });
     }
-    function band(sl, y, head, body, fill) {
-      T(sl, 0.5, y, 12.33, 0.55, [[[head, { b: true, c: WHITE }], [body, { c: WHITE }]]], 11.5, { fill: fill || NAVY, shape: S.roundRect, r: 0.06, valign: 'middle', margin: 8, min: 8 });
+    function band(sl, y, head, body) {
+      T(sl, 0.5, y, 12.33, 0.55, [[[head, { b: true, c: NAVYD }], [body, { c: INK }]]], 11.5, { fill: LNAVY, shape: S.rect, valign: 'middle', margin: 12, min: 8 });
+      sl.addShape(S.rect, { x: 0.5, y: y, w: 0.08, h: 0.55, fill: { color: NAVY } });
     }
     function issueTag(no) { return '課題' + no; }
     function stageOf(key) {
@@ -333,7 +336,7 @@
         T(sl, x + 0.8, 1.55, CWD - 0.85, 0.72, [[[o, { b: true, s: 15 }]], [[byWho[o].map(function (it) { return issueTag(it.no); }).join('・'), { s: 10, c: GREY }]]], 12, { valign: 'middle', min: 8 });
         byWho[o].forEach(function (it, k) {
           var y = 2.37 + k * (ch + 0.1);
-          box(sl, x, y, CWD, ch, WHITE, NAVY);
+          box(sl, x, y, CWD, ch, WHITE, CARDLINE);
           tag(sl, x + 0.1, y + 0.1, 0.75, issueTag(it.no), NAVY, 10);
           if (it.pri) tag(sl, x + CWD - 1.0, y + 0.1, 0.9, '優先度 ' + it.pri, /高/.test(it.pri) ? RED : GREY, 9);
           T(sl, x + 0.1, y + 0.42, CWD - 0.2, 0.36, it.title, 12.5, { bold: true, min: 9 });
@@ -342,7 +345,8 @@
       });
       if (M.root) {
         var ss = sentences(M.root), head = ss.length > 1 ? ss[0] : '', rest = ss.length > 1 ? ss.slice(1).join('') : M.root;
-        T(sl, 0.5, 6.15, 12.33, 0.78, [[['根っこの課題　' + head, { b: true, s: 14, c: WHITE }], [rest, { s: 11.5, c: WHITE }]]], 12, { fill: NAVY, shape: S.roundRect, r: 0.06, valign: 'middle', margin: 8, min: 8 });
+        T(sl, 0.5, 6.15, 12.33, 0.78, [[['根っこの課題　' + head, { b: true, s: 14, c: NAVYD }], [rest, { s: 11.5, c: INK }]]], 12, { fill: LNAVY, shape: S.rect, valign: 'middle', margin: 12, min: 8 });
+        sl.addShape(S.rect, { x: 0.5, y: 6.15, w: 0.08, h: 0.78, fill: { color: NAVY } });
       }
     })();
 
@@ -381,7 +385,7 @@
         var chh = (h - 0.08 * (nos.length - 1)) / nos.length;
         nos.forEach(function (no, k) {
           var yy = y + k * (chh + 0.08), it = no && M.issueMap[no];
-          box(sl, XI, yy, WI, chh, WHITE, NAVY);
+          box(sl, XI, yy, WI, chh, WHITE, CARDLINE);
           if (no) tag(sl, XI + 0.08, yy + (chh - 0.28) / 2, 0.65, issueTag(no), NAVY, 9.5);
           T(sl, XI + (no ? 0.8 : 0.1), yy, WI - (no ? 0.85 : 0.2), chh, it ? [[[it.title, { b: true }]], [[it.who + 'の課題', { s: 9, c: GREY }]]] : [r.issuesText], 10.5, { valign: 'middle', min: 7.5 });
         });
@@ -472,12 +476,12 @@
       var yb = 1.95 + rows.length * (RH + 0.05) + 0.15, hb = 6.9 - yb;
       var bs = A.p3.bs, outs = [];
       pick(bs, '残るもの').forEach(function (v) { outs = outs.concat(splitTop(v, ['、'])); });
-      box(sl, 0.5, yb, 4.0, hb, WHITE, NAVY);
-      T(sl, 0.65, yb + 0.05, 3.7, 0.35, '御社に残るもの', 12, { bold: true, color: NAVY, nofit: true });
+      box(sl, 0.5, yb, 4.0, hb, WHITE, CARDLINE);
+      T(sl, 0.65, yb + 0.05, 3.7, 0.35, '御社に残るもの', 12, { bold: true, color: NAVYD, nofit: true });
       var orow = Math.max(1, Math.ceil(outs.length / 2)), oh = Math.min(0.62, (hb - 0.5) / orow);
       outs.slice(0, 8).forEach(function (o, k) {
         var xx = 0.65 + (k % 2) * 1.85, yy = yb + 0.45 + Math.floor(k / 2) * oh;
-        docIcon(sl, xx, yy + 0.04, 0.3, Math.min(0.42, oh - 0.1), LNAVY, NAVY);
+        docIcon(sl, xx, yy + 0.04, 0.3, Math.min(0.42, oh - 0.1), LNAVY, CARDLINE);
         T(sl, xx + 0.36, yy - 0.03, 1.47, oh, o, 9.5, { bold: true, valign: 'middle', min: 7 });
       });
       box(sl, 4.65, yb, 3.85, hb, LIGHT, null);
@@ -510,7 +514,7 @@
       T(sl, 0.5, 1.5, 6.0, 0.3, '今の業務の流れ', 11, { bold: true, color: GREY, nofit: true });
       steps.forEach(function (st, i) {
         var x = 0.5 + i * SW;
-        sl.addShape(i ? S.chevron : S.homePlate, { x: x, y: 1.82, w: SW + 0.05, h: 0.6, fill: { color: GREY } });
+        sl.addShape(i ? S.chevron : S.homePlate, { x: x, y: 1.82, w: SW + 0.05, h: 0.6, fill: { color: GFILL } });
         T(sl, x + 0.25, 1.82, SW - 0.4, 0.6, st.name, 11.5, { bold: true, color: WHITE, align: 'center', valign: 'middle', margin: 0, min: 7.5 });
         T(sl, x + 0.05, 2.46, SW - 0.1, 0.3, st.who, 10.5, { bold: true, color: NAVY, align: 'center', min: 7.5 });
         var hot = !!st.iss;
@@ -530,7 +534,7 @@
       var m = nos.length, CW = m ? (12.33 - 0.15 * (m - 1)) / m : 12.33, foot = extra.join('');
       nos.forEach(function (no, k) {
         var it = M.issueMap[no] || { title: '', who: '', fact: '', cause: '' }, x = 0.5 + k * (CW + 0.15), y = 4.45, hh = foot ? 1.85 : 2.3;
-        box(sl, x, y, CW, hh, WHITE, NAVY);
+        box(sl, x, y, CW, hh, WHITE, CARDLINE);
         person(sl, x + 0.4, y + 0.15, NAVY, 0.75);
         tag(sl, x + 0.8, y + 0.15, 0.75, issueTag(no), NAVY, 10);
         T(sl, x + 1.65, y + 0.1, CW - 1.75, 0.38, it.title, 13, { bold: true, valign: 'middle', min: 9 });
@@ -569,7 +573,7 @@
         T(sl, XN, yy, WN, rh, r[1] || '', 11.5, { fill: LIGHT, shape: S.roundRect, valign: 'middle', margin: 6, min: 8 });
         arrow(sl, XAr, yy + rh / 2 - 0.18, WA - 0.1, 0.36, NAVY);
         var nv = String(r[2] || ''), ss = sentences(nv);
-        T(sl, XNew, yy, WNEW, rh, ss.length > 1 ? [[[ss[0], { b: true, c: NAVY }]], ss.slice(1).join('')] : [[[nv, { b: true, c: NAVY }]]], 11.5, { fill: LNAVY, line: NAVY, shape: S.roundRect, valign: 'middle', margin: 6, min: 8 });
+        T(sl, XNew, yy, WNEW, rh, ss.length > 1 ? [[[ss[0], { b: true, c: NAVY }]], ss.slice(1).join('')] : [[[nv, { b: true, c: NAVY }]]], 11.5, { fill: LNAVY, line: CARDLINE, shape: S.roundRect, valign: 'middle', margin: 6, min: 8 });
       });
     }
     function mockBlock(sl, x, y, w, h, m) {
@@ -602,8 +606,8 @@
       }
     }
     function changesBlock(sl, x, y, w, h, items) {
-      box(sl, x, y, w, h, LNAVY, NAVY);
-      T(sl, x + 0.15, y + 0.08, w - 0.3, 0.35, '変わること', 13, { bold: true, color: NAVY, nofit: true });
+      box(sl, x, y, w, h, LNAVY, CARDLINE);
+      T(sl, x + 0.15, y + 0.08, w - 0.3, 0.35, '変わること', 13, { bold: true, color: NAVYD, nofit: true });
       T(sl, x + 0.15, y + 0.5, w - 0.3, h - 0.55, items, 12.5, { bullet: true, min: 8, space: 8 });
     }
     function improvePages(A, K, img) {
@@ -658,7 +662,7 @@
         tb.slice(1).forEach(function (r) { c3.push((r[iT] || '') + '（' + [r[iW], r[iS]].filter(Boolean).join('・') + '）'); });
       }
       A.p3.bs.forEach(function (b) { var o = kv(b); if (o.k !== '当社の支援') c3.push(b); });
-      var cols = [['① 今の業務と課題', GREY, LIGHT, c1], ['② 改善策', NAVY, LNAVY, c2], ['③ 進め方', NAVY, LNAVY, c3]];
+      var cols = [['① 今の業務と課題', GFILL, LIGHT, c1], ['② 改善策', NAVY, LNAVY, c2], ['③ 進め方', NAVY, LNAVY, c3]];
       var support = pick(A.p2.bs, '当社の支援').concat(pick(A.p3.bs, '当社の支援')).join('。');
       var bottom = support ? 6.15 : 6.85;
       cols.forEach(function (c, i) {
@@ -684,10 +688,10 @@
       T(sl, 0.5, 1.6, 2.4, 1.55, [[['今あるシステム', { b: true }]], [[sv('今あるシステム'), { s: 10 }]]], 12, { fill: LIGHT, shape: S.roundRect, margin: 6, min: 7.5 });
       arrow(sl, 2.95, 2.15, 0.45, 0.4, NAVY);
       var proc = pick(classes, '加工して入れる')[0] || '';
-      T(sl, 3.45, 1.6, 2.2, 1.55, [[['入れる資料を選ぶ', { b: true, c: NAVY }]], [['下の区分で選び、' + (proc ? '必要なら' + proc.replace(/^.*?から、?/, '') : '入れてよい資料だけにする'), { s: 10 }]]], 11, { fill: LNAVY, line: NAVY, shape: S.roundRect, margin: 6, min: 7.5 });
+      T(sl, 3.45, 1.6, 2.2, 1.55, [[['入れる資料を選ぶ', { b: true, c: NAVY }]], [['下の区分で選び、' + (proc ? '必要なら' + proc.replace(/^.*?から、?/, '') : '入れてよい資料だけにする'), { s: 10 }]]], 11, { fill: LNAVY, line: CARDLINE, shape: S.roundRect, margin: 6, min: 7.5 });
       check(sl, 3.5, 3.22, '人が確かめる');
       arrow(sl, 5.7, 2.15, 0.45, 0.4, NAVY);
-      box(sl, 6.2, 1.5, 4.0, 3.55, LNAVY, NAVY);
+      box(sl, 6.2, 1.5, 4.0, 3.55, LNAVY, CARDLINE);
       T(sl, 6.32, 1.55, 3.8, 0.35, cloud.name || 'クラウド', 12.5, { bold: true, color: NAVY, min: 9 });
       var items = splitTop(cloud.desc, ['、']).slice(0, 5), ih = (3.55 - 0.5) / Math.max(1, items.length);
       items.forEach(function (it, k) {
@@ -735,7 +739,7 @@
       });
       if (!tops.length && lows.length) tops.push(lows.shift());
       var role = function (x, y, w, h, r) {
-        box(sl, x, y, w, h, WHITE, NAVY);
+        box(sl, x, y, w, h, WHITE, CARDLINE);
         person(sl, x + 0.45, y + 0.15, NAVY, 0.8);
         T(sl, x + 0.85, y + 0.08, w - 0.95, 0.4, r.name, 13, { bold: true, min: 9 });
         if (r.role) tag(sl, x + 0.85, y + 0.5, 1.0, r.role, NAVY, 9.5);
@@ -913,13 +917,13 @@
       }
       var hasV = rows.some(function (r) { return r.v; }), px = hasV ? 8.05 : 0.5, pwid = hasV ? 4.78 : 12.33;
       if (hasV) {
-        var bars = [{ y: '今', v: 1.0, cap: '今', col: LINE }].concat(rows.filter(function (r) { return r.v; }).map(function (r) { return { y: r.y, v: r.v, cap: r.title, col: NAVY }; }));
+        var bars = [{ y: '今', v: 1.0, cap: '今', col: GFILL }].concat(rows.filter(function (r) { return r.v; }).map(function (r) { return { y: r.y, v: r.v, cap: r.title, col: NAVY }; }));
         var BASE = 5.85, maxV = Math.max.apply(null, bars.map(function (b) { return b.v; })), SC = (BASE - top - 0.85) / maxV, bwid = Math.min(1.25, 6.6 / bars.length - 0.35);
         T(sl, 0.55, top, 5.0, 0.32, '目安（今を1とした倍率）【仮定】', 11, { bold: true, color: GREY, nofit: true });
         bars.forEach(function (b, i) {
           var x = 0.75 + i * (7.0 / bars.length), hh = b.v * SC;
           box(sl, x, BASE - hh, bwid, hh, b.col, null, { rect: true });
-          T(sl, x - 0.2, BASE - hh - 0.45, bwid + 0.4, 0.42, (Math.round(b.v * 10) / 10).toFixed(1) + '倍', 16, { bold: true, color: b.col === LINE ? GREY : NAVY, align: 'center', nofit: true });
+          T(sl, x - 0.2, BASE - hh - 0.45, bwid + 0.4, 0.42, (Math.round(b.v * 10) / 10).toFixed(1) + '倍', 16, { bold: true, color: b.col === GFILL ? GREY : NAVY, align: 'center', nofit: true });
           T(sl, x - 0.25, BASE + 0.08, bwid + 0.5, 0.3, b.y, 12, { bold: true, align: 'center', min: 8 });
           if (b.cap !== b.y) T(sl, x - 0.25, BASE + 0.38, bwid + 0.5, 0.3, b.cap, 9.5, { color: GREY, align: 'center', min: 7 });
         });
@@ -928,7 +932,7 @@
       var ph = (6.5 - top - 0.15 * (rows.length - 1)) / rows.length;
       rows.forEach(function (r, k) {
         var y = top + k * (ph + 0.15);
-        box(sl, px, y, pwid, ph, WHITE, NAVY);
+        box(sl, px, y, pwid, ph, WHITE, CARDLINE);
         T(sl, px, y, 1.25, ph, [[[r.y, { b: true, s: 13, c: WHITE }]], [[r.title, { s: 9.5, c: WHITE }]]], 12, { fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', min: 7 });
         T(sl, px + 1.35, y + 0.08, pwid - 1.45, ph - 0.12, r.items.concat(r.state ? [r.state] : []), 11, { bullet: true, min: 7.5, space: 3 });
       });
@@ -963,7 +967,7 @@
       var n = Math.min(4, items.length), cw = (12.33 - 0.2 * (n - 1)) / n;
       items.slice(0, 4).forEach(function (o, i) {
         var x = 0.5 + i * (cw + 0.2);
-        box(sl, x, 1.3, cw, 2.35, WHITE, NAVY);
+        box(sl, x, 1.3, cw, 2.35, WHITE, CARDLINE);
         T(sl, x + 0.15, 1.35, 0.9, 0.6, ('0' + (i + 1)).slice(-2), 24, { bold: true, color: NAVY, valign: 'middle', nofit: true });
         T(sl, x + 1.0, 1.35, cw - 1.15, 0.6, o.k || '', 16, { bold: true, valign: 'middle', min: 10 });
         T(sl, x + 0.15, 2.0, cw - 0.3, 1.6, sentences(o.v).length > 1 ? sentences(o.v) : [o.v], 12, { bullet: true, min: 8, space: 6 });
