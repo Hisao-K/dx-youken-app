@@ -18,7 +18,7 @@
   var ORANGE = 'E7741D', NAVY = '2F3C5A', RED = 'B42318', GREY = '666666', INK = '222222', LINE = 'BBBBBB';
   var LIGHT = 'F4F5F7', LNAVY = 'E9ECF2', LRED = 'FBE9E7', KBT = 'FDF1E7', WHITE = 'FFFFFF';
   var FONT = 'Meiryo', W = 13.33, H = 7.5;
-  // 差出人（表紙）。名前は呼ぶ側が opts.presenter で渡す（ログイン中の人の名前。公開するプログラムに個人の名前を書かない）
+  // 差出人（表紙）は屋号だけ（2026-11-14 久夫さん決定。個人の名前は入れない）
   var PRESENTER_SUB = 'DX推進・生成AI導入支援／経済産業省 DX認定事業者';
   // 当社のメニュー（費用の行で、この名前の金額だけオレンジにする）
   var KB_MENU = /AI活用診断|社内研修|導入伴走|業務改善まるごと|保守・運用|採用ページ|Instagram|SNS ?投稿|ホームページ|^合計|当社/;
@@ -309,7 +309,7 @@
       });
       if (nums.length) T(sl, 0.6, 5.82, 5.7, 0.3, '目標の数字は目安【仮定】。初回面談と最初の試行で確かめます', 9.5, { color: GREY });
       var d = new Date();
-      T(sl, 0.6, 6.2, 5.8, 1.0, [d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日', "Kamo's BASE" + (opts.presenter ? '　' + opts.presenter : ''), PRESENTER_SUB], 11, { color: GREY, space: 2 });
+      T(sl, 0.6, 6.2, 5.8, 1.0, [d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日', "Kamo's BASE", PRESENTER_SUB], 11, { color: GREY, space: 2 });
     })();
 
     // ---- 2 解決する課題（だれの課題かごと）
