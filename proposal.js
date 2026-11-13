@@ -173,7 +173,9 @@
     var pages = [];
     // 写真として使うのは、写真風の画像（2026-11-12〜。写真の説明 plan にカードがある）だけ。
     // それより前の文字入りの「効果のイメージ図」は、写真の枠に入れると切れて読めないため使わない（2026-11-14 アプリで試して分かった）
-    var photoOk = !!(plan && ((plan.after && (plan.after.cards || []).length) || (plan.before && (plan.before.cards || []).length)));
+    // 見分け方：写真の説明に、写す人物（people）か場面（place）がある（visual.gs が 2026-11-12 から書く項目。古い図の説明にはない）
+    var isPhoto = function (side) { return !!(side && side.people); };
+    var photoOk = !!(plan && (plan.place || isPhoto(plan.after) || isPhoto(plan.before)));
     images = photoOk ? (images || []).map(function (d) { return d ? String(d).replace(/^data:/, '') : null; }) : [];
     var nIss = M.issues.length;
 
