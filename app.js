@@ -1104,10 +1104,18 @@
     box.replaceChildren.apply(box, stepBadges(s, state.tab));
   }
 
-  /** まだ取り込んでいないデスクの版（新しい順） */
-  function newDeskVersions(step) {
+  /**
+   * まだ取り込んでいないデスクの版（新しい順）。取り込み済みの版より古いもの（名前の日時が前）は出さない
+   * （2026-11-14：新しい形の版を取り込んだ後も、前の形の古い版が「届きました」と案内され、取り込んで前の形に戻ってしまったため）
+   */
+  function latestAppliedDesk(step) {
     var c = state.c;
-    return ((c && c.desk && c.desk.versions) || []).filter(function (v) { return v.step === step && !v.applied; });
+    return ((c && c.desk && c.desk.versions) || []).filter(function (v) { return v.step === step && v.applied; })
+      .reduce(function (m, v) { return String(v.name) > m ? String(v.name) : m; }, '');
+  }
+  function newDeskVersions(step) {
+    var c = state.c, last = latestAppliedDesk(step);
+    return ((c && c.desk && c.desk.versions) || []).filter(function (v) { return v.step === step && !v.applied && String(v.name) > last; });
   }
 
   function deskApplyButton(v) {
@@ -1336,11 +1344,14 @@
 
     // デスクの版
     var versions = ((c.desk && c.desk.versions) || []).filter(function (v) { return v.step === step; });
+    var lastApplied = latestAppliedDesk(step);
     if (versions.length) {
       parts.push(el('h3', { text: 'デスクの版（家のPCで作ったもの）' }));
       parts.push(el('div', { class: 'list' }, versions.map(function (v) {
+        // 取り込み済みの版より前の版は「古い版」と出す（取り込むと前の中身に戻る）
+        var older = !v.applied && String(v.name) < lastApplied;
         return el('div', { class: 'mat' }, [
-          el('div', { class: 'head' }, [el('span', { class: 'badge ' + (v.applied ? 'st-done' : 'st-run'), text: v.applied ? '取り込み済み' : '新しい版' }), el('span', { class: 'name', text: v.name })]),
+          el('div', { class: 'head' }, [el('span', { class: 'badge ' + (v.applied ? 'st-done' : older ? '' : 'st-run'), text: v.applied ? '取り込み済み' : older ? '古い版（取り込んだ版より前）' : '新しい版' }), el('span', { class: 'name', text: v.name })]),
           v.applied ? null : el('div', { class: 'acts' }, [deskApplyButton(v)]),
         ]);
       })));
