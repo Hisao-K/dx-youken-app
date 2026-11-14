@@ -21,6 +21,8 @@
   var ORANGE = 'E7741D', NAVY = '7D716A', NAVYD = '4A403B', RED = 'B04A42', GREY = '756D68', GFILL = 'CFC8C3', INK = '332D2A', LINE = 'E6E0DB';
   var LIGHT = 'F9F7F5', LNAVY = 'F4F0ED', CARDLINE = 'E0D7D1', LRED = 'FAEEEC', KBT = 'FDF1E7', WHITE = 'FFFFFF';
   var FONT = 'Meiryo', W = 13.33, H = 7.5;
+  // 文字の下限（2026-11-14 久夫さん指示「最小のフォントサイズは12pt」）。これより小さくしない。入らないときは配置で場所を作る
+  var MINPT = 12;
   // 差出人（表紙）は屋号だけ（2026-11-14 久夫さん決定。個人の名前は入れない）
   var PRESENTER_SUB = 'DX推進・生成AI導入支援／経済産業省 DX認定事業者';
   // 当社のメニュー（費用の行で、この名前の金額だけオレンジにする）
@@ -165,6 +167,11 @@
     }
     return min;
   }
+  function fitsAt(t, w, h, s, bullet) {
+    var ps = plain(t), cpl = Math.max(1, (w - 0.12 - (bullet ? 0.25 : 0)) * 72 / s);
+    var lines = ps.reduce(function (n, p) { return n + Math.max(1, Math.ceil(vlen(p) / cpl)); }, 0);
+    return lines * s * 1.3 / 72 + ps.length * (bullet ? s * 0.35 / 72 : 0) + 0.08 <= h + 0.02;
+  }
 
   // ---------------------------------------------------------------- 本体
   function build(text, images, plan, opts) {
@@ -174,6 +181,7 @@
     var S = pptx.ShapeType;
     var M = model(text);
     var pages = [];
+    var overflow = [];   // 12pt で入りきらない所（確かめ用。pptx.__overflow で見られる）
     // 写真として使うのは、写真風の画像（2026-11-12〜。写真の説明 plan にカードがある）だけ。
     // それより前の文字入りの「効果のイメージ図」は、写真の枠に入れると切れて読めないため使わない（2026-11-14 アプリで試して分かった）
     // 見分け方：画像の記録（opts.visual）に style: 'photo' がある、または写真風に切り替えた 2026-11-12 以降に作った画像
@@ -193,7 +201,7 @@
           var o = r[1] || {}, op = {};
           if (o.b != null) op.bold = o.b;
           if (o.c) op.color = o.c;
-          if (o.s) op.fontSize = Math.round(o.s * factor * 2) / 2;
+          if (o.s) op.fontSize = Math.max(MINPT, Math.round(o.s * factor * 2) / 2);
           if (j === 0 && bullet) { op.bullet = { indent: 12 }; op.paraSpaceAfter = space || 4; }
           if (j === 0 && !bullet && space) op.paraSpaceAfter = space;
           if (j === arr.length - 1 && i < t.length - 1) op.breakLine = true;
@@ -204,7 +212,9 @@
     }
     function T(sl, x, y, w, h, t, size, o) {
       o = o || {};
-      var s2 = o.nofit ? size : fitSize(t, w, h, size, o.min || Math.min(size, 8), o.bullet);
+      size = Math.max(MINPT, size);
+      var s2 = o.nofit ? size : fitSize(t, w, h, size, Math.max(MINPT, o.min || Math.min(size, 8)), o.bullet);
+      if (!o.nofit && !fitsAt(t, w, h, s2, o.bullet)) overflow.push({ page: pages.length, w: Math.round(w * 100) / 100, h: Math.round(h * 100) / 100, text: plain(t).join('／').slice(0, 50) });
       var op = { x: x, y: y, w: w, h: h, fontFace: o.face || FONT, fontSize: s2, color: o.color || INK, bold: !!o.bold,
         align: o.align || 'left', valign: o.valign || 'top', margin: o.margin != null ? o.margin : 3 };
       if (o.shape) { op.shape = o.shape; if (o.shape === S.roundRect) op.rectRadius = o.r != null ? o.r : 0.08; }
@@ -222,7 +232,7 @@
       sl.addShape(o.rect ? S.rect : (o.shape || S.roundRect), op);
     }
     function tag(sl, x, y, w, label, fill, size) {
-      T(sl, x, y, w, 0.28, label, size || 10, { bold: true, color: WHITE, fill: fill || NAVY, shape: S.roundRect, r: 0.06, align: 'center', valign: 'middle', margin: 1, nofit: true });
+      T(sl, x, y, w, 0.3, label, size || MINPT, { bold: true, color: WHITE, fill: fill || NAVY, shape: S.roundRect, r: 0.06, align: 'center', valign: 'middle', margin: 1, nofit: true });
     }
     function arrow(sl, x, y, w, h, color, kind) { sl.addShape(kind || S.rightArrow, { x: x, y: y, w: w, h: h, fill: { color: color || NAVY } }); }
     function person(sl, cx, y, color, k) {
@@ -255,7 +265,7 @@
       return sl;
     }
     function lead(sl, t) { if (t) T(sl, 0.5, 1.05, 12.33, 0.42, t, 13.5, { valign: 'middle', min: 10 }); }
-    function note(sl, t, y) { if (t) T(sl, 0.5, y || 6.95, 12.33, 0.3, t, 9, { color: GREY, min: 7.5 }); }
+    function note(sl, t, y) { if (t) T(sl, 0.5, y || 6.95, 11.3, 0.32, t, 12, { color: GREY }); }
     function supportStrip(sl, y, t, h) {
       if (!t) return;
       h = h || 0.6;
@@ -276,7 +286,7 @@
       var body = rows.map(function (r, i) {
         return r.map(function (c, j) {
           var head = i === 0;
-          var cell = { text: String(c == null ? '' : c), options: { fontFace: FONT, fontSize: head ? (o.headSize || 11) : (o.size || 10.5), bold: head || (o.boldFirst && j === 0), color: head ? WHITE : INK,
+          var cell = { text: String(c == null ? '' : c), options: { fontFace: FONT, fontSize: Math.max(MINPT, head ? (o.headSize || 11) : (o.size || 10.5)), bold: head || (o.boldFirst && j === 0), color: head ? WHITE : INK,
             fill: { color: head ? (o.headFill || NAVY) : (o.zebra !== false && i % 2 === 0 ? LIGHT : WHITE) }, valign: 'middle', margin: [3, 5, 3, 5] } };
           if (o.cell) o.cell(cell, i, j, r);
           return cell;
@@ -293,7 +303,7 @@
       var img = images[1] || images[0];
       if (img) {
         sl.addImage({ data: img, x: 6.55, y: 0, w: W - 6.55, h: H, sizing: { type: 'cover', w: W - 6.55, h: H } });
-        T(sl, W - 2.6, H - 0.45, 2.45, 0.3, 'イメージ（AI で作成した写真）', 9, { color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', margin: 0, nofit: true });
+        T(sl, W - 3.0, H - 0.45, 2.85, 0.32, 'イメージ（AI で作成した写真）', 12, { color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', margin: 0, nofit: true });
       } else sl.addShape(S.rect, { x: 6.55, y: 0, w: W - 6.55, h: H, fill: { color: LNAVY } });
       sl.addShape(S.rect, { x: 0, y: 0, w: 0.18, h: H, fill: { color: ORANGE } });
       logo(sl, 0.6, 0.5, 3.0, 0.5, 20);
@@ -307,13 +317,13 @@
         var p = nn.split(/[｜|]/), big = strip(p[0]), lab = strip(p[1] || '');
         var lp = lab.match(/^([^（]*)(（.*）)?$/) || [lab, lab, ''];
         var x = 0.6 + i * 1.95;
-        box(sl, x, 4.75, 1.8, 1.0, LNAVY, null);
-        T(sl, x + 0.05, 4.8, 1.7, 0.45, big, 20, { bold: true, color: NAVY, align: 'center', valign: 'middle', min: 12 });
-        T(sl, x + 0.05, 5.22, 1.7, 0.5, [lp[1] || '', lp[2] || ''].filter(Boolean), 9.5, { align: 'center', valign: 'middle', min: 7.5 });
+        box(sl, x, 4.6, 1.8, 1.25, LNAVY, null);
+        T(sl, x + 0.05, 4.63, 1.7, 0.45, big, 20, { bold: true, color: NAVYD, align: 'center', valign: 'middle', min: 12 });
+        T(sl, x + 0.03, 5.08, 1.74, 0.75, [lp[1] || '', lp[2] || ''].filter(Boolean), 12, { align: 'center', valign: 'middle' });
       });
-      if (nums.length) T(sl, 0.6, 5.82, 5.7, 0.3, '目標の数字は目安【仮定】。初回面談と最初の試行で確かめます', 9.5, { color: GREY });
+      if (nums.length) T(sl, 0.6, 5.9, 5.8, 0.32, '目標の数字は目安【仮定】。初回面談と最初の試行で確かめます', 12, { color: GREY });
       var d = new Date();
-      T(sl, 0.6, 6.2, 5.8, 1.0, [d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日', "Kamo's BASE", PRESENTER_SUB], 11, { color: GREY, space: 2 });
+      T(sl, 0.6, 6.3, 5.8, 0.95, [d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日', "Kamo's BASE", PRESENTER_SUB], 12, { color: GREY });
     })();
 
     // ---- 2 解決する課題（だれの課題かごと）
@@ -329,25 +339,25 @@
       });
       var cols = owners.length, gap = 0.11, CWD = (12.33 - gap * (cols - 1)) / cols;
       var maxN = Math.max.apply(null, owners.map(function (o) { return byWho[o].length; }));
-      var yEnd = M.root ? 6.02 : 6.85, ch = Math.min(1.75, (yEnd - 2.37 - 0.1 * (maxN - 1)) / maxN);
+      var yEnd = M.root ? 6.1 : 6.88, ch = Math.min(2.0, (yEnd - 2.2 - 0.1 * (maxN - 1)) / maxN);
       owners.forEach(function (o, i) {
         var x = 0.5 + i * (CWD + gap);
-        box(sl, x, 1.55, CWD, 0.72, LIGHT, null);
-        person(sl, x + 0.4, 1.6, NAVY, 0.8);
-        T(sl, x + 0.8, 1.55, CWD - 0.85, 0.72, [[[o, { b: true, s: 15 }]], [[byWho[o].map(function (it) { return issueTag(it.no); }).join('・'), { s: 10, c: GREY }]]], 12, { valign: 'middle', min: 8 });
+        box(sl, x, 1.5, CWD, 0.62, LIGHT, null);
+        person(sl, x + 0.38, 1.55, NAVY, 0.68);
+        T(sl, x + 0.75, 1.5, CWD - 0.8, 0.62, [[[o, { b: true, s: 15 }], ['　' + byWho[o].map(function (it) { return issueTag(it.no); }).join('・'), { s: 12, c: GREY }]]], 12, { valign: 'middle' });
         byWho[o].forEach(function (it, k) {
-          var y = 2.37 + k * (ch + 0.1);
+          var y = 2.2 + k * (ch + 0.1);
           box(sl, x, y, CWD, ch, WHITE, CARDLINE);
-          tag(sl, x + 0.1, y + 0.1, 0.75, issueTag(it.no), NAVY, 10);
-          if (it.pri) tag(sl, x + CWD - 1.0, y + 0.1, 0.9, '優先度 ' + it.pri, /高/.test(it.pri) ? RED : GREY, 9);
-          T(sl, x + 0.1, y + 0.42, CWD - 0.2, 0.36, it.title, 12.5, { bold: true, min: 9 });
-          T(sl, x + 0.1, y + 0.78, CWD - 0.2, ch - 0.82, [[['事実　', { b: true, c: GREY }], [it.fact, {}]], [['原因　', { b: true, c: RED }], [it.cause, {}]]], 10, { min: 7.5, space: 3 });
+          tag(sl, x + 0.1, y + 0.08, 0.8, issueTag(it.no), NAVY);
+          if (it.pri) tag(sl, x + CWD - 1.1, y + 0.08, 1.0, '優先度 ' + it.pri, /高/.test(it.pri) ? RED : GREY);
+          T(sl, x + 0.08, y + 0.4, CWD - 0.16, 0.34, it.title, 13, { bold: true });
+          T(sl, x + 0.08, y + 0.72, CWD - 0.16, ch - 0.74, [[['事実　', { b: true, c: GREY }], [it.fact, {}]], [['原因　', { b: true, c: RED }], [it.cause, {}]]], 12, {});
         });
       });
       if (M.root) {
         var ss = sentences(M.root), head = ss.length > 1 ? ss[0] : '', rest = ss.length > 1 ? ss.slice(1).join('') : M.root;
-        T(sl, 0.5, 6.15, 12.33, 0.78, [[['根っこの課題　' + head, { b: true, s: 14, c: NAVYD }], [rest, { s: 11.5, c: INK }]]], 12, { fill: LNAVY, shape: S.rect, valign: 'middle', margin: 12, min: 8 });
-        sl.addShape(S.rect, { x: 0.5, y: 6.15, w: 0.08, h: 0.78, fill: { color: NAVY } });
+        T(sl, 0.5, 6.2, 12.33, 0.78, [[['根っこの課題　' + head, { b: true, s: 14, c: NAVYD }], [rest, { s: 12, c: INK }]]], 12, { fill: LNAVY, shape: S.rect, valign: 'middle', margin: 12 });
+        sl.addShape(S.rect, { x: 0.5, y: 6.2, w: 0.08, h: 0.78, fill: { color: NAVY } });
       }
     })();
 
@@ -358,28 +368,30 @@
       var acts = M.map.filter(function (r) { return r.key !== '前提'; });
       var sl = header('今回のご提案：' + (nIss ? nIss + 'つの課題を、' : '') + acts.length + 'つの取り組みで解決する');
       lead(sl, (nIss ? nIss + 'つの課題を、' : '') + acts.length + 'つの取り組みで解決します。このあと取り組みごとに、①業務の流れと課題 ②改善策 ③進め方の順で説明します。');
-      var XI = 0.5, WI = 3.2, XA = 4.05, WA = 3.8, XS = 7.95, WS = 1.45, XC = 9.5, WC = 1.3, XE = 10.9, WE = 1.93;
+      var XI = 0.5, WI = 3.4, XA = 4.25, WA = 3.4, XS = 7.75, WS = 1.4, XC = 9.25, WC = 1.55, XE = 10.9, WE = 1.93;
       [[XI, WI, '解決する課題（だれの課題か）'], [XA, WA, '取り組み（何をするか）'], [XS, WS, '段階'], [XC, WC, '当社の費用'], [XE, WE, '効果（年）']].forEach(function (c) {
-        T(sl, c[0], 1.52, c[1], 0.35, c[2], 10.5, { bold: true, color: GREY, align: 'center' });
+        T(sl, c[0], 1.45, c[1], 0.32, c[2], 12, { bold: true, color: GREY, align: 'center' });
       });
       var cell = function (x, w, y, h, t, size, bold, color) {
         box(sl, x, y, w, h, LIGHT, null);
         // 「15万円〜（導入伴走パック）」は、金額を大きく、かっこの中を小さく2行目に
+        // かっこの中が長いとき（10字以上）は、12pt で入らないので出さない（中身は取り組みのページにある）
         var i0 = String(t).indexOf('（'), main = i0 > 0 ? String(t).slice(0, i0) : String(t), subt = i0 > 0 ? String(t).slice(i0) : '';
-        T(sl, x + 0.04, y, w - 0.08, h, subt ? [[[main, { b: bold, c: color || INK }]], [[subt, { b: false, s: size * 0.72, c: color === ORANGE ? ORANGE : GREY }]]] : [[[main, { b: bold, c: color || INK }]]], size, { align: 'center', valign: 'middle', min: 7.5 });
+        if (vlen(subt) > 11) subt = '';
+        T(sl, x + 0.04, y, w - 0.08, h, subt ? [[[main, { b: bold, c: color || INK }]], [[subt, { b: false, c: color === ORANGE ? ORANGE : GREY }]]] : [[[main, { b: bold, c: color || INK }]]], size, { align: 'center', valign: 'middle' });
       };
-      var y = 1.9;
+      var y = 1.8;
       if (pre) {
-        box(sl, XI, y, 12.33, 0.5, LIGHT, null);
-        T(sl, XI + 0.15, y, XS - XI - 0.2, 0.5, [[['全体の前提　', { b: true, c: NAVY }], [pre.title, {}]]], 11, { valign: 'middle', min: 8 });
-        T(sl, XS, y, WS, 0.5, pre.stage.replace(/（/, '\n').replace(/）/, '').split('\n'), 10, { bold: true, color: NAVY, align: 'center', valign: 'middle', min: 7.5 });
-        T(sl, XC, y, WC, 0.5, pre.cost.replace(/（.*$/, ''), 13, { bold: true, color: ORANGE, align: 'center', valign: 'middle', min: 8 });
-        T(sl, XE, y, WE, 0.5, pre.effect, 10.5, { align: 'center', valign: 'middle', min: 7.5 });
-        y += 0.6;
+        box(sl, XI, y, 12.33, 0.56, LIGHT, null);
+        T(sl, XI + 0.15, y, XS - XI - 0.2, 0.56, [[['全体の前提　', { b: true, c: NAVY }], [pre.title, {}]]], 12, { valign: 'middle' });
+        T(sl, XS, y, WS, 0.56, pre.stage.replace(/（/, '\n').replace(/）/, '').split('\n'), 12, { bold: true, color: NAVY, align: 'center', valign: 'middle' });
+        T(sl, XC, y, WC, 0.56, pre.cost.replace(/（.*$/, ''), 13, { bold: true, color: ORANGE, align: 'center', valign: 'middle' });
+        T(sl, XE, y, WE, 0.56, pre.effect, 12, { align: 'center', valign: 'middle' });
+        y += 0.64;
       }
       var first = M.mapNotes.filter(function (b) { return /^最初は/.test(b); })[0];
       var bottom = first ? 6.45 : 6.9;
-      var hs = acts.map(function (r) { return Math.max(0.7, Math.max(1, r.issues.length) * 0.56); });
+      var hs = acts.map(function (r) { return Math.max(0.72, Math.max(1, r.issues.length) * 0.6 + 0.08 * (Math.max(1, r.issues.length) - 1)); });
       var tot = hs.reduce(function (a, b) { return a + b; }, 0) + 0.1 * (acts.length - 1), k0 = Math.min(1, (bottom - y) / tot);
       acts.forEach(function (r, i) {
         var h = hs[i] * k0, nos = r.issues.length ? r.issues : [null];
@@ -387,17 +399,19 @@
         nos.forEach(function (no, k) {
           var yy = y + k * (chh + 0.08), it = no && M.issueMap[no];
           box(sl, XI, yy, WI, chh, WHITE, CARDLINE);
-          if (no) tag(sl, XI + 0.08, yy + (chh - 0.28) / 2, 0.65, issueTag(no), NAVY, 9.5);
-          T(sl, XI + (no ? 0.8 : 0.1), yy, WI - (no ? 0.85 : 0.2), chh, it ? [[[it.title, { b: true }]], [[it.who + 'の課題', { s: 9, c: GREY }]]] : [r.issuesText], 10.5, { valign: 'middle', min: 7.5 });
+          if (no) tag(sl, XI + 0.08, yy + (chh - 0.3) / 2, 0.72, issueTag(no), NAVY);
+          T(sl, XI + (no ? 0.85 : 0.1), yy, WI - (no ? 0.9 : 0.2), chh, it ? [[[it.title, { b: true }]], [[it.who + 'の課題', { c: GREY }]]] : [r.issuesText], 12, { valign: 'middle', margin: 2 });
         });
         arrow(sl, XI + WI + 0.05, y + h / 2 - 0.15, 0.25, 0.3, NAVY);
         box(sl, XA, y, WA, h, LNAVY, null);
         T(sl, XA + 0.1, y, 0.45, h, r.key, 20, { bold: true, color: NAVY, align: 'center', valign: 'middle', nofit: true });
         var A = actByKey(r.key), desc = A ? (pick(A.p2.bs, 'やること')[0] || pick(A.p2.bs, '変わること')[0] || '') : '';
-        T(sl, XA + 0.55, y, WA - 0.6, h, h > 0.95 && desc ? [[[r.title, { b: true, s: 11.5 }]], [[desc, { s: 9.5 }]]] : [[[r.title, { b: true, s: 11.5 }]]], 11, { valign: 'middle', min: 7.5 });
-        cell(XS, WS, y, h, r.stage, 10.5, true, NAVY);
-        cell(XC, WC, y, h, r.cost, 12, true, ORANGE);
-        cell(XE, WE, y, h, r.effect, 10.5, false, INK);
+        // 中身（やること）は、12pt で入るときだけ出す
+        var withDesc = desc && fitsAt([r.title, desc], WA - 0.6, h, 12);
+        T(sl, XA + 0.55, y, WA - 0.6, h, withDesc ? [[[r.title, { b: true }]], [[desc, {}]]] : [[[r.title, { b: true }]]], 12, { valign: 'middle', margin: 2 });
+        cell(XS, WS, y, h, r.stage, 12, true, NAVY);
+        cell(XC, WC, y, h, r.cost, 13, true, ORANGE);
+        cell(XE, WE, y, h, r.effect, 12, false, INK);
         y += h + 0.1;
       });
       if (first) band(sl, 6.55, '最初は' + (first.match(/^最初は([^：:]*)[：:]/) || ['', ''])[1] + '：', first.replace(/^最初は[^：:]*[：:]\s*/, ''));
@@ -429,7 +443,7 @@
       items = splitTop(main.replace(/^運用費[：:]\s*/, ''), ['＋', '、', '。', '＝']).concat(items);
       return items.map(function (it) {
         var sum = /^＝/.test(it); it = it.replace(/^＝\s*/, '').replace(/^運用費[：:]\s*/, '');
-        var am = it.match(/((?:月\s*)?(?:年\s*)?(?:約\s*)?[0-9０-９][0-9０-９,.]*(?:\s*[〜~]\s*[0-9０-９.,]*)?\s*万?円[〜~]?)/);
+        var am = it.match(/((?:月\s*|年\s*)?(?:約\s*)?[0-9０-９][0-9０-９,.]*\s*万?(?:\s*[〜~]\s*[0-9０-９.,]*\s*万?)?\s*円[〜~]?)/);
         if (!am) { if (it) notes.push(it); return null; }
         var idx = it.indexOf(am[1]), name = it.slice(0, idx).trim(), after = it.slice(idx + am[1].length).trim(), amt = am[1];
         var tags = (name.match(/【[^】]*】/g) || []).join(''); name = name.replace(/【[^】]*】/g, '').trim();
@@ -451,9 +465,9 @@
       [['当社', ORANGE, null], ['御社', NAVY, null], ['一緒に', NAVY, ORANGE]].forEach(function (lg, k) {
         var lx = 12.83 - (3 - k) * 0.95;
         box(sl, lx, 1.16, 0.3, 0.2, lg[1], lg[2], { rect: true, lw: 2 });
-        T(sl, lx + 0.33, 1.08, 0.62, 0.34, lg[0], 9.5, { valign: 'middle', margin: 0, nofit: true });
+        T(sl, lx + 0.33, 1.08, 0.62, 0.34, lg[0], 12, { valign: 'middle', margin: 0, nofit: true });
       });
-      var XT = 0.5, WT = 4.75, XO = 5.3, WO = 2.3, XP = 7.65, WP = 12.83 - XP;
+      var XT = 0.5, WT = 5.0, XO = 5.55, WO = 2.7, XP = 8.3, WP = 12.83 - XP;
       var cols = [];
       if (gantt) {
         var n = Math.max.apply(null, rows.map(function (r) { return r.sp.s1; }));
@@ -461,47 +475,52 @@
       } else cols = ['時期'];
       var pw = WP / cols.length;
       [[XT, WT, '作業スコープ（やること）'], [XO, WO, '担当']].forEach(function (c) {
-        T(sl, c[0], 1.5, c[1] - 0.05, 0.38, c[2], 11, { bold: true, color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', nofit: true });
+        T(sl, c[0], 1.5, c[1] - 0.05, 0.38, c[2], 12, { bold: true, color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', nofit: true });
       });
-      cols.forEach(function (c, k) { T(sl, XP + k * pw, 1.5, pw - 0.05, 0.38, c, 11, { bold: true, color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', min: 8 }); });
-      var RH = Math.min(0.5, (6.95 - 1.75 - 1.95) / rows.length - 0.05);
+      cols.forEach(function (c, k) { T(sl, XP + k * pw, 1.5, pw - 0.05, 0.38, c, 12, { bold: true, color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle' }); });
+      // 行の高さ：作業と担当が12ptで1行に入るなら低く（0.4）、2行になるなら高く（0.58）。下の3つの枠に1.7インチ以上残す
+      var twoLines = rows.some(function (r) { return !fitsAt(r.task, WT - 0.15, 0.4, 12) || !fitsAt(r.who, WO - 0.1, 0.4, 12); });
+      var RH = Math.min(twoLines ? 0.58 : 0.4, (6.9 - 1.7 - 1.95) / rows.length - 0.05);
       rows.forEach(function (r, i) {
         var y = 1.95 + i * (RH + 0.05);
         box(sl, XT, y, 12.33, RH, i % 2 === 0 ? LIGHT : WHITE, null, { rect: true });
-        T(sl, XT + 0.08, y, WT - 0.15, RH, r.task, 10.5, { valign: 'middle', min: 7.5 });
+        T(sl, XT + 0.08, y, WT - 0.15, RH, r.task, 12, { valign: 'middle', margin: 2 });
         var w0 = r.who.replace(/（[^（）]*）/g, ''), kb = /当社/.test(w0), cu = CUST_RE.test(w0);
-        T(sl, XO + 0.05, y, WO - 0.1, RH, r.who, 10, { bold: true, color: kb && !cu ? ORANGE : NAVY, valign: 'middle', min: 7.5 });
-        if (gantt) box(sl, XP + r.sp.s0 * pw + 0.03, y + 0.1, (r.sp.s1 - r.sp.s0) * pw - 0.06, Math.max(0.12, RH - 0.2), kb && !cu ? ORANGE : NAVY, kb && cu ? ORANGE : null, { lw: 2.5 });
-        else T(sl, XP + 0.05, y, WP - 0.1, RH, r.when, 10, { valign: 'middle', min: 7.5 });
+        T(sl, XO + 0.05, y, WO - 0.1, RH, r.who, 12, { bold: true, color: kb && !cu ? ORANGE : NAVY, valign: 'middle', margin: 2 });
+        if (gantt) box(sl, XP + r.sp.s0 * pw + 0.03, y + 0.08, (r.sp.s1 - r.sp.s0) * pw - 0.06, Math.max(0.12, RH - 0.16), kb && !cu ? ORANGE : NAVY, kb && cu ? ORANGE : null, { lw: 2.5 });
+        else T(sl, XP + 0.05, y, WP - 0.1, RH, r.when, 12, { valign: 'middle', margin: 2 });
       });
       var yb = 1.95 + rows.length * (RH + 0.05) + 0.15, hb = 6.9 - yb;
       var bs = A.p3.bs, outs = [];
       pick(bs, '残るもの').forEach(function (v) { outs = outs.concat(splitTop(v, ['、'])); });
-      box(sl, 0.5, yb, 4.0, hb, WHITE, CARDLINE);
-      T(sl, 0.65, yb + 0.05, 3.7, 0.35, '御社に残るもの', 12, { bold: true, color: NAVYD, nofit: true });
-      var orow = Math.max(1, Math.ceil(outs.length / 2)), oh = Math.min(0.62, (hb - 0.5) / orow);
+      // 下の3つの枠：残るもの（3.3）・費用（4.7）・負担と条件（4.03）
+      box(sl, 0.5, yb, 3.3, hb, WHITE, CARDLINE);
+      T(sl, 0.62, yb + 0.05, 3.1, 0.35, '御社に残るもの', 13, { bold: true, color: NAVYD, nofit: true });
+      var orow = Math.max(1, Math.ceil(outs.length / 2)), oh = Math.min(0.62, (hb - 0.48) / orow);
       outs.slice(0, 8).forEach(function (o, k) {
-        var xx = 0.65 + (k % 2) * 1.85, yy = yb + 0.45 + Math.floor(k / 2) * oh;
-        docIcon(sl, xx, yy + 0.04, 0.3, Math.min(0.42, oh - 0.1), LNAVY, CARDLINE);
-        T(sl, xx + 0.36, yy - 0.03, 1.47, oh, o, 9.5, { bold: true, valign: 'middle', min: 7 });
+        var xx = 0.6 + (k % 2) * 1.57, yy = yb + 0.45 + Math.floor(k / 2) * oh;
+        docIcon(sl, xx, yy + 0.06, 0.26, Math.min(0.36, oh - 0.12), LNAVY, CARDLINE);
+        T(sl, xx + 0.3, yy, 1.27, oh, o, 12, { bold: true, valign: 'middle', margin: 1 });
       });
-      box(sl, 4.65, yb, 3.85, hb, LIGHT, null);
-      T(sl, 4.8, yb + 0.05, 3.6, 0.35, [[['費用（税抜）', { b: true, c: NAVY }], ['　オレンジ＝当社の支援費', { s: 9, c: ORANGE }]]], 12, { nofit: true });
+      box(sl, 3.95, yb, 4.7, hb, LIGHT, null);
+      T(sl, 4.07, yb + 0.05, 4.5, 0.35, [[['費用（税抜）', { b: true, c: NAVY }], ['　オレンジ＝当社の支援費', { c: ORANGE }]]], 12, { nofit: true });
       var ci = [];
       pick(bs, '費用').forEach(function (v) { ci = ci.concat(costItems(v)); });
-      var cih = Math.min(0.42, (hb - 0.5) / Math.max(1, ci.length));
+      var cih = Math.min(0.42, (hb - 0.48) / Math.max(1, ci.length));
+      // 金額の列の幅は、いちばん長い金額に合わせる（12pt で1行に入るように）
+      var amW = Math.max(1.5, Math.min(2.6, Math.max.apply(null, ci.filter(function (c) { return c[0]; }).map(function (c) { return vlen(c[1]); }).concat([0])) * 12 / 72 + 0.15));
       ci.forEach(function (c, k) {
         var yy = yb + 0.45 + k * cih;
-        if (!c[0]) { T(sl, 4.8, yy, 3.6, cih, c[1], 9, { color: GREY, valign: 'middle', min: 7 }); return; }
-        T(sl, 4.8, yy, 1.9, cih, c[0], 10, { valign: 'middle', min: 7 });
-        T(sl, 6.6, yy, 1.85, cih, c[1], 11, { bold: true, color: KB_MENU.test(c[0]) ? ORANGE : NAVY, align: 'right', valign: 'middle', min: 7 });
+        if (!c[0]) { T(sl, 4.07, yy, 4.5, cih, c[1], 12, { color: GREY, valign: 'middle', margin: 1 }); return; }
+        T(sl, 4.07, yy, 4.5 - amW, cih, c[0], 12, { valign: 'middle', margin: 1 });
+        T(sl, 8.57 - amW, yy, amW, cih, c[1], 12, { bold: true, color: KB_MENU.test(c[0]) ? ORANGE : NAVY, align: 'right', valign: 'middle', margin: 1 });
       });
-      box(sl, 8.65, yb, 4.18, hb, LIGHT, null);
-      T(sl, 8.8, yb + 0.05, 3.9, 0.35, '御社の負担と、終わりの条件', 12, { bold: true, color: NAVY, nofit: true });
+      box(sl, 8.8, yb, 4.03, hb, LIGHT, null);
+      T(sl, 8.92, yb + 0.05, 3.8, 0.35, '御社の負担と、終わりの条件', 13, { bold: true, color: NAVY, nofit: true });
       var conds = [];
       pick(bs, '御社の負担').forEach(function (v) { conds.push('負担：' + v); });
       pick(bs, '終わりの条件').forEach(function (v) { conds.push('終わりの条件：' + v); });
-      if (conds.length) T(sl, 8.8, yb + 0.42, 3.9, hb - 0.45, conds, 9.5, { bullet: true, min: 7, space: 3 });
+      if (conds.length) T(sl, 8.92, yb + 0.42, 3.85, hb - 0.45, conds, 12, { bullet: true, space: 2 });
       note(sl, pick(bs, '当社の支援')[0] || '', 6.95);
     }
 
@@ -558,7 +577,7 @@
     }
     function photoBlock(sl, x, y, w, h, img) {
       sl.addImage({ data: img, x: x, y: y, w: w, h: h - 0.32, sizing: { type: 'cover', w: w, h: h - 0.32 } });
-      T(sl, x, y + h - 0.3, w, 0.3, '対策後の職場のイメージ（AI で作成。実在の社員ではありません）', 9, { color: GREY, min: 7 });
+      T(sl, x, y + h - 0.3, w, 0.3, 'イメージ写真（AI で作成）', 12, { color: GREY });
     }
     function rowsBlock(sl, x, y, w, h, tb) {
       var rows = tb.slice(1), n = rows.length, WP = 1.3, WA = 0.4, WN = (w - WP - WA - 0.2) * 0.43, WNEW = w - WP - WA - 0.2 - WN;
@@ -580,36 +599,45 @@
     function mockBlock(sl, x, y, w, h, m) {
       var tb = m.table, wide = tb && tb[0] && tb[0].length >= 3;
       box(sl, x, y, w, h, LIGHT, null, { rect: true });
-      var notesH = m.notes.length ? 0.5 : 0.1;
+      var ck0 = m.notes.map(kv).filter(function (o) { return /確かめる/.test(o.k); })[0];
+      var notesH = !m.notes.length ? 0.1 : ck0 ? 0.5 : 0.75;
       box(sl, x + 0.15, y + 0.15, w - 0.3, h - 0.3 - notesH, WHITE, LINE, { rect: true });
-      T(sl, x + 0.25, y + 0.2, w - 1.4, 0.38, m.name, 12.5, { bold: true, min: 9 });
-      tag(sl, x + w - 1.1, y + 0.25, 0.85, wide ? '記入例' : '見本', NAVY, 9);
+      T(sl, x + 0.25, y + 0.2, w - 1.4, 0.38, m.name, 13, { bold: true });
+      tag(sl, x + w - 1.1, y + 0.24, 0.85, wide ? '記入例' : '見本', NAVY);
       var top = y + 0.65, avail = h - 0.3 - notesH - 0.55;
       if (tb && wide) {
         var cw = tb[0].map(function (c, j) { return Math.max(2.6, Math.max.apply(null, tb.map(function (r) { return Math.min(14, vlen(r[j] || '')); }))); });
         var sum = cw.reduce(function (a, b) { return a + b; }, 0), tw = w - 0.5;
         var rowH = Math.min(0.6, avail / tb.length);
-        addTable(sl, x + 0.25, top, tw, tb, cw.map(function (c) { return c / sum * tw; }), { size: rowH < 0.45 ? 9 : 10, headSize: 10, rowH: rowH });
+        addTable(sl, x + 0.25, top, tw, tb, cw.map(function (c) { return c / sum * tw; }), { size: 12, headSize: 12, rowH: rowH });
       } else if (tb) {
-        var rows = tb.slice(1).length ? tb.slice(1) : tb, rh = Math.min(0.5, avail / rows.length);
-        var lw = Math.min((w - 0.6) * 0.42, Math.max(0.45, Math.max.apply(null, rows.map(function (r) { return vlen(r[0] || ''); })) * 0.15 + 0.2));
+        var rows = tb.slice(1).length ? tb.slice(1) : tb;
+        var lw = Math.min((w - 0.6) * 0.42, Math.max(0.45, Math.max.apply(null, rows.map(function (r) { return vlen(r[0] || ''); })) * 0.18 + 0.2));
+        // 行の高さは中身の行数で決める（12pt で2行になる行は高く）
+        var hts = rows.map(function (r) {
+          var cpl1 = Math.max(1, (lw - 0.1) * 72 / 12), cpl2 = Math.max(1, (w - 0.7 - lw) * 72 / 12);
+          var ln = Math.max(Math.ceil(vlen(r[0] || '') / cpl1), Math.ceil(vlen(r.slice(1).join('　')) / cpl2), 1);
+          return ln * 0.22 + 0.12;
+        });
+        var sumH = hts.reduce(function (a, b) { return a + b; }, 0), kk = sumH > avail ? avail / sumH : Math.min(1.25, avail / sumH);
+        var yy = top;
         rows.forEach(function (r, k) {
-          var yy = top + k * rh;
-          T(sl, x + 0.3, yy, lw, rh, r[0] || '', 10, { bold: true, color: GREY, valign: 'middle', min: 7 });
-          T(sl, x + 0.3 + lw, yy, w - 0.6 - lw, rh, r.slice(1).join('　'), 10.5, { valign: 'middle', min: 7 });
+          var rh = hts[k] * kk;
+          T(sl, x + 0.3, yy, lw, rh, r[0] || '', 12, { bold: true, color: GREY, valign: 'middle', margin: 1 });
+          T(sl, x + 0.3 + lw, yy, w - 0.6 - lw, rh, r.slice(1).join('　'), 12, { valign: 'middle', margin: 1 });
           vline(sl, x + 0.3, yy + rh - 0.02, x + w - 0.3, yy + rh - 0.02, LINE, 0.75);
+          yy += rh;
         });
       }
       if (m.notes.length) {
-        var ck = m.notes.map(kv).filter(function (o) { return /確かめる/.test(o.k); })[0];
-        if (ck) check(sl, x + 0.2, y + h - 0.45, ck.v);
-        else T(sl, x + 0.15, y + h - 0.48, w - 0.3, 0.42, m.notes.join('。'), 9.5, { color: GREY, min: 7 });
+        if (ck0) check(sl, x + 0.2, y + h - 0.45, ck0.v);
+        else T(sl, x + 0.15, y + h - 0.72, w - 0.3, 0.66, m.notes.join('。'), 12, { color: GREY });
       }
     }
     function changesBlock(sl, x, y, w, h, items) {
       box(sl, x, y, w, h, LNAVY, CARDLINE);
-      T(sl, x + 0.15, y + 0.08, w - 0.3, 0.35, '変わること', 13, { bold: true, color: NAVYD, nofit: true });
-      T(sl, x + 0.15, y + 0.5, w - 0.3, h - 0.55, items, 12.5, { bullet: true, min: 8, space: 8 });
+      T(sl, x + 0.15, y + 0.08, w - 0.3, 0.35, '変わること', 14, { bold: true, color: NAVYD, nofit: true });
+      T(sl, x + 0.15, y + 0.5, w - 0.3, h - 0.55, items, 13, { bullet: true, space: 6 });
     }
     function improvePages(A, K, img) {
       var P = A.p2;
@@ -619,8 +647,8 @@
       var blocks = [];
       if (img) blocks.push({ t: 'photo', w: 4.0 });
       if (P.rows && P.rows.length > 1) blocks.push({ t: 'rows', w: 8.1 });
-      P.mocks.forEach(function (m) { blocks.push({ t: 'mock', m: m, w: m.table && m.table[0] && m.table[0].length >= 3 ? 7.3 : 4.0 }); });
-      if (changes.length) blocks.push({ t: 'changes', w: 4.0 });
+      P.mocks.forEach(function (m) { blocks.push({ t: 'mock', m: m, w: m.table && m.table[0] && m.table[0].length >= 3 ? 8.0 : 4.2 }); });
+      if (changes.length) blocks.push({ t: 'changes', w: 3.5 });
       var pg = [[]], used = 0;
       blocks.forEach(function (b) {
         var need = b.w + (pg[pg.length - 1].length ? 0.17 : 0);
@@ -635,8 +663,10 @@
         if (pi === 0 && P.steps.length) { afterFlow(sl, P.steps, 1.55); top = 2.95; }
         var bottom = last && support ? 6.2 : 6.88;
         var sumW = bl.reduce(function (a, b) { return a + b.w; }, 0) + 0.17 * Math.max(0, bl.length - 1);
+        var extra = Math.max(0, 12.33 - sumW), mk = bl.filter(function (b) { return b.t === 'mock'; });
         var grow = bl.filter(function (b) { return b.t === 'changes'; })[0] || bl[bl.length - 1];
-        if (grow) grow.w += Math.max(0, 12.33 - sumW);
+        if (mk.length === 1 && grow && grow.t === 'changes' && bl.length === 2) { mk[0].w += extra / 2; grow.w += extra / 2; }
+        else if (grow) grow.w += extra;
         var x = 0.5;
         bl.forEach(function (b) {
           var h = bottom - top;
@@ -686,41 +716,41 @@
       var sl = header(s.title, nIss ? nIss + 'つの課題の前提' : '');
       var cloud = nameParen(sv('クラウド'));
       lead(sl, (cloud.name ? cloud.name + ' を中心に、' : '') + '今あるシステムを活かします。AI に入れる前と、使う前に人が確かめます。');
-      T(sl, 0.5, 1.6, 2.4, 1.55, [[['今あるシステム', { b: true }]], [[sv('今あるシステム'), { s: 10 }]]], 12, { fill: LIGHT, shape: S.roundRect, margin: 6, min: 7.5 });
+      T(sl, 0.5, 1.6, 2.4, 1.55, [[['今あるシステム', { b: true }]], [[sv('今あるシステム'), {}]]], 12, { fill: LIGHT, shape: S.roundRect, margin: 5 });
       arrow(sl, 2.95, 2.15, 0.45, 0.4, NAVY);
       var proc = pick(classes, '加工して入れる')[0] || '';
-      T(sl, 3.45, 1.6, 2.2, 1.55, [[['入れる資料を選ぶ', { b: true, c: NAVY }]], [['下の区分で選び、' + (proc ? '必要なら' + proc.replace(/^.*?から、?/, '') : '入れてよい資料だけにする'), { s: 10 }]]], 11, { fill: LNAVY, line: CARDLINE, shape: S.roundRect, margin: 6, min: 7.5 });
-      check(sl, 3.5, 3.22, '人が確かめる');
+      T(sl, 3.45, 1.6, 2.2, 1.55, [[['入れる資料を選ぶ', { b: true, c: NAVY }]], [['下の区分で選び、' + (proc ? '必要なら' + proc.replace(/^.*?から、?/, '') : '入れてよい資料だけにする'), {}]]], 12, { fill: LNAVY, line: CARDLINE, shape: S.roundRect, margin: 5 });
+      check(sl, 3.5, 3.2, '人が確かめる');
       arrow(sl, 5.7, 2.15, 0.45, 0.4, NAVY);
-      box(sl, 6.2, 1.5, 4.0, 3.55, LNAVY, CARDLINE);
+      box(sl, 6.2, 1.5, 4.0, 3.2, LNAVY, CARDLINE);
       T(sl, 6.32, 1.55, 3.8, 0.35, cloud.name || 'クラウド', 12.5, { bold: true, color: NAVY, min: 9 });
-      var items = splitTop(cloud.desc, ['、']).slice(0, 5), ih = (3.55 - 0.5) / Math.max(1, items.length);
+      var items = splitTop(cloud.desc, ['、']).slice(0, 5), ih = (3.2 - 0.5) / Math.max(1, items.length);
       items.forEach(function (it, k) {
         var p = it.split(/[＝=]/);
-        T(sl, 6.32, 1.95 + k * ih, 3.76, ih - 0.08, p.length > 1 ? [[[p[0], { b: true }]], [[p.slice(1).join('＝'), { s: 10 }]]] : [[[it, { b: true }]]], 11.5, { fill: WHITE, shape: S.roundRect, valign: 'middle', margin: 5, min: 7.5 });
+        T(sl, 6.32, 1.95 + k * ih, 3.76, ih - 0.08, p.length > 1 ? [[[p[0], { b: true }]], [[p.slice(1).join('＝'), {}]]] : [[[it, { b: true }]]], 12, { fill: WHITE, shape: S.roundRect, valign: 'middle', margin: 4 });
       });
-      arrow(sl, 10.25, 2.95, 0.45, 0.4, NAVY);
-      box(sl, 10.75, 1.5, 2.08, 3.55, LIGHT, null);
+      arrow(sl, 10.25, 2.85, 0.45, 0.4, NAVY);
+      box(sl, 10.75, 1.5, 2.08, 3.2, LIGHT, null);
       T(sl, 10.8, 1.55, 2.0, 0.35, '使う人', 12.5, { bold: true, align: 'center', nofit: true });
-      var users = splitTop(nameParen(sv('使う人')).name, ['・', '、']).slice(0, 4), uh = Math.min(0.85, 2.5 / Math.max(1, users.length));
+      var users = splitTop(nameParen(sv('使う人')).name, ['・', '、']).slice(0, 4), uh = Math.min(0.8, 2.15 / Math.max(1, users.length));
       users.forEach(function (u, k) {
         person(sl, 11.2, 2.0 + k * uh, NAVY, Math.min(0.7, uh * 0.8));
-        T(sl, 11.5, 2.0 + k * uh, 1.3, Math.max(0.4, uh * 0.65), u, 11, { bold: true, valign: 'middle', min: 8 });
+        T(sl, 11.48, 1.98 + k * uh, 1.33, Math.max(0.4, uh * 0.7), u, 12, { bold: true, valign: 'middle', margin: 1 });
       });
-      check(sl, 10.82, 4.6, '答えは人が判断');
+      check(sl, 10.82, 4.28, '答えは人が判断');
       if (sv('事務')) {
-        T(sl, 0.5, 3.75, 3.0, 0.35, '事務', 12.5, { bold: true, color: NAVY, nofit: true });
-        T(sl, 0.5, 4.12, 5.55, 0.9, sv('事務'), 11, { fill: LIGHT, shape: S.roundRect, valign: 'middle', margin: 6, min: 8 });
+        T(sl, 0.5, 3.6, 3.0, 0.32, '事務', 13, { bold: true, color: NAVY, nofit: true });
+        T(sl, 0.5, 3.94, 5.55, 0.76, sv('事務'), 12, { fill: LIGHT, shape: S.roundRect, valign: 'middle', margin: 5 });
       }
       if (classes.length) {
-        T(sl, 0.5, 5.2, 6.0, 0.35, 'AI に入れる情報の区分', 12.5, { bold: true, nofit: true });
+        T(sl, 0.5, 4.82, 6.0, 0.32, 'AI に入れる情報の区分', 13, { bold: true, nofit: true });
         var cc = classes.slice(0, 3), cw = (12.33 - 0.2 * (cc.length - 1)) / cc.length;
         cc.forEach(function (b, k) {
           var o = kv(b), col = /入れない/.test(o.k) ? RED : /加工/.test(o.k) ? GREY : NAVY, fill = col === RED ? LRED : col === GREY ? LIGHT : LNAVY;
-          T(sl, 0.5 + k * (cw + 0.2), 5.57, cw, 0.82, [[[(o.k || '') + '　', { b: true, c: col }], [o.v, { s: 10.5 }]]], 11.5, { fill: fill, line: col, shape: S.roundRect, valign: 'middle', margin: 6, min: 8 });
+          T(sl, 0.5 + k * (cw + 0.2), 5.17, cw, 0.8, [[[(o.k || '') + '　', { b: true, c: col }], [o.v, {}]]], 12, { fill: fill, line: col, shape: S.roundRect, valign: 'middle', margin: 5 });
         });
       }
-      if (rules.length) T(sl, 0.5, 6.47, 12.33, 0.55, rules.join('　'), 9.5, { color: GREY, min: 7 });
+      if (rules.length) T(sl, 0.5, 6.05, 11.4, 1.0, rules.join('　'), 12, { color: GREY });
     }
 
     // ---- 体制
@@ -793,7 +823,7 @@
       var core = rows.filter(function (r) { return !r.tail; }), months = core.length ? core[core.length - 1].s1 : t;
       var MON = Math.min(12, Math.max(1, Math.ceil(t - 0.001)));
       var sl = header('全体の工程：約' + Math.round(months) + 'か月。各段階の終わりに、御社と結果を確かめる');
-      var GX = 2.9, GW = 9.93, mw = GW / MON, rh = Math.min(0.7, 3.0 / rows.length);
+      var GX = 3.3, GW = 9.53, mw = GW / MON, rh = Math.min(0.8, 3.15 / rows.length);
       for (var m = 0; m < MON; m++) {
         var x = GX + m * mw;
         T(sl, x, 1.15, mw - 0.04, 0.42, (m + 1) + 'か月目' + (m === MON - 1 && rows[rows.length - 1].tail ? '〜' : ''), 10.5, { bold: true, color: GREY, fill: LIGHT, shape: S.rect, align: 'center', valign: 'middle', min: 7 });
@@ -802,7 +832,7 @@
       var ms = 0;
       rows.forEach(function (r, k) {
         var y = 1.75 + k * rh;
-        T(sl, 0.5, y, 2.35, rh - 0.1, [[[r.n + (r.dur ? '（' + r.dur + '）' : ''), { b: true }]], [[r.a, { s: 9.5, c: GREY }]]], 11.5, { valign: 'middle', min: 7 });
+        T(sl, 0.5, y, 2.75, rh - 0.04, [[[r.n + (r.dur ? '（' + r.dur + '）' : ''), { b: true }]], [[r.a, { c: GREY }]]], 12, { valign: 'middle', margin: 1 });
         var bw = Math.max(0.3, (Math.min(r.s1, MON) - r.s0) * mw - 0.05);
         // 棒の中の文字は、棒が十分に長いときだけ（短い棒は節目の印と重なるため）
         if (bw >= 1.6) T(sl, GX + r.s0 * mw, y + 0.08, bw, rh - 0.24, r.a, 10, { bold: true, color: WHITE, fill: NAVY, shape: S.roundRect, align: 'center', valign: 'middle', min: 7 });
@@ -810,24 +840,24 @@
         if (!r.tail && r.c) {
           ms++;
           r.ms = ms;
-          sl.addText(String(ms), { x: GX + r.s1 * mw - 0.2, y: y + 0.06, w: 0.42, h: rh - 0.2, shape: S.diamond, fill: { color: NAVY }, line: { color: WHITE, width: 1 }, fontFace: FONT, fontSize: 10, bold: true, color: WHITE, align: 'center', valign: 'middle', margin: 0 });
+          sl.addText(String(ms), { x: GX + r.s1 * mw - 0.2, y: y + 0.06, w: 0.42, h: rh - 0.2, shape: S.diamond, fill: { color: NAVY }, line: { color: WHITE, width: 1 }, fontFace: FONT, fontSize: MINPT, bold: true, color: WHITE, align: 'center', valign: 'middle', margin: 0 });
         }
       });
       var mrows = rows.filter(function (r) { return r.ms; }).slice(0, 4);
       var y0 = 1.75 + rows.length * rh + 0.15;
       if (mrows.length) {
         T(sl, 0.5, y0, 12.33, 0.35, '◆ 判断の節目：次に進むときに確かめること', 12.5, { bold: true, color: NAVY, nofit: true });
-        var bw2 = (12.33 - 0.2 * (mrows.length - 1)) / mrows.length, bh = Math.min(1.3, 6.4 - (y0 + 0.4));
+        var bw2 = (12.33 - 0.2 * (mrows.length - 1)) / mrows.length, bh = Math.min(1.3, 6.47 - (y0 + 0.4));
         mrows.forEach(function (r, k) {
           var x = 0.5 + k * (bw2 + 0.2), yy = y0 + 0.4;
           box(sl, x, yy, bw2, bh, LIGHT, null);
-          sl.addText(String(r.ms), { x: x + 0.12, y: yy + 0.1, w: 0.36, h: 0.4, shape: S.diamond, fill: { color: NAVY }, fontFace: FONT, fontSize: 9.5, bold: true, color: WHITE, align: 'center', valign: 'middle', margin: 0 });
-          T(sl, x + 0.55, yy + 0.08, bw2 - 0.65, 0.42, '節目' + r.ms + '（' + r.n + 'の終わり）', 11.5, { bold: true, valign: 'middle', min: 8 });
-          T(sl, x + 0.15, yy + 0.52, bw2 - 0.3, bh - 0.55, r.c, 10.5, { min: 7.5 });
+          sl.addText(String(r.ms), { x: x + 0.12, y: yy + 0.1, w: 0.36, h: 0.4, shape: S.diamond, fill: { color: NAVY }, fontFace: FONT, fontSize: MINPT, bold: true, color: WHITE, align: 'center', valign: 'middle', margin: 0 });
+          T(sl, x + 0.55, yy + 0.08, bw2 - 0.65, 0.42, '節目' + r.ms + '（' + r.n + 'の終わり）', 12, { bold: true, valign: 'middle' });
+          T(sl, x + 0.12, yy + 0.5, bw2 - 0.24, bh - 0.52, r.c, 12, { margin: 2 });
         });
       }
       var bs = bulletsOf(s.lines);
-      if (bs.length) T(sl, 0.5, 6.45, 12.33, 0.5, bs.join('　'), 10.5, { color: GREY, min: 7.5 });
+      if (bs.length) T(sl, 0.5, 6.52, 11.3, 0.55, bs.join('　'), 12, { color: GREY });
     }
 
     // ---- 費用と効果
@@ -845,22 +875,22 @@
       if (tS) {
         T(sl, 0.5, y, 6.0, 0.42, '当社の支援費（税抜）', 16, { bold: true, color: ORANGE, nofit: true });
         var rows = tS.map(function (r, i) { return i ? r.map(function (c, j) { return j === 0 ? String(c).replace(/（/, '\n（') : j === 1 ? String(c).replace(/：/, '\n') : c; }) : r; });
-        var rh = Math.min(0.56, 3.0 / rows.length);
+        var rh = Math.min(0.54, 2.9 / rows.length);
         addTable(sl, 0.5, y + 0.45, 6.0, rows, [1.25, 3.45, 1.3], { size: 10, headFill: ORANGE, rowH: rh, boldFirst: true, cell: function (cell, i, j, r) {
           if (i > 0 && /合計/.test(r[0])) { cell.options.fill = { color: KBT }; cell.options.bold = true; }
           if (i > 0 && j === 2) { cell.options.color = ORANGE; cell.options.bold = true; }
         } });
-        y += 0.45 + rows.length * rh + 0.25;
+        y += 0.45 + rows.length * rh + 0.2;
       }
       if (tR) {
         T(sl, 0.5, y, 6.0, 0.42, '運用費（月額・税抜）', 14, { bold: true, color: NAVY, nofit: true });
-        var rh2 = Math.min(0.36, 1.6 / tR.length);
-        addTable(sl, 0.5, y + 0.42, 6.0, tR, [4.0, 2.0], { size: 10, rowH: rh2, cell: function (cell, i, j, r) { if (i > 0 && /当社/.test(r[0])) { cell.options.color = ORANGE; cell.options.bold = true; } } });
-        y += 0.42 + tR.length * rh2 + 0.12;
+        var rh2 = Math.min(0.34, 1.5 / tR.length);
+        addTable(sl, 0.5, y + 0.42, 6.0, tR, [3.95, 2.05], { size: 10, rowH: rh2, cell: function (cell, i, j, r) { if (i > 0 && /当社/.test(r[0])) { cell.options.color = ORANGE; cell.options.bold = true; } } });
+        y += 0.42 + tR.length * rh2 + 0.08;
         var rb = bulletsOf(pR.lines);
         if (rb.length) {
           var ss = sentences(rb.join(''));
-          T(sl, 0.5, y, 6.0, Math.max(0.3, 7.0 - y), [[[ss[0] || '', { b: true, s: 12 }]]].concat(ss.slice(1).length ? [[[ss.slice(1).join(''), { s: 10, c: GREY }]]] : []), 12, { min: 7.5 });
+          T(sl, 0.5, y, 6.0, Math.max(0.3, 7.05 - y), [[[ss[0] || '', { b: true }]]].concat(ss.slice(1).length ? [[[ss.slice(1).join(''), { c: GREY }]]] : []), 12, { margin: 1 });
         }
       }
       // 効果
@@ -872,6 +902,8 @@
           var v = parseFloat(String(r[iV] || '').replace(/[^0-9.]/g, ''));
           if (!isNaN(v)) { labels.push(r[iL]); vals.push(v); }
         });
+        // 12pt で項目名が切れないよう、長い（14字を超える）ものがあれば、かっこの中をすべて外す
+        if (labels.some(function (l) { return vlen(l) > 14; })) labels = labels.map(function (l) { return l.replace(/（[^（）]*）/g, '').trim(); });
       }
       var total = (pick(M.mapNotes, '効果の合計')[0] || '').replace(/【[^】]*】/g, '');
       if (!total && vals.length) total = '年 約' + vals.reduce(function (a, b) { return a + b; }, 0) + '万円相当';
@@ -879,17 +911,17 @@
       if (vals.length) {
         sl.addChart(pptx.ChartType.bar, [{ name: '年間（万円）', labels: labels.slice().reverse(), values: vals.slice().reverse() }], {
           x: 6.85, y: 2.15, w: 6.0, h: 2.9, barDir: 'bar', chartColors: [NAVY], showValue: true, dataLabelFormatCode: '0"万円"', dataLabelPosition: 'outEnd',
-          dataLabelFontSize: 11, dataLabelFontBold: true, dataLabelFontFace: FONT, dataLabelColor: INK, valAxisHidden: true, valGridLine: { style: 'none' }, catGridLine: { style: 'none' },
-          catAxisLabelFontSize: 10, catAxisLabelFontFace: FONT, catAxisLabelColor: INK, catAxisLineColor: LINE, showLegend: false, barGapWidthPct: 60,
+          dataLabelFontSize: MINPT, dataLabelFontBold: true, dataLabelFontFace: FONT, dataLabelColor: INK, valAxisHidden: true, valGridLine: { style: 'none' }, catGridLine: { style: 'none' },
+          catAxisLabelFontSize: MINPT, catAxisLabelFontFace: FONT, catAxisLabelColor: INK, catAxisLineColor: LINE, showLegend: false, barGapWidthPct: 60,
           valAxisMinVal: 0, valAxisMaxVal: Math.ceil(Math.max.apply(null, vals) * 1.3)
         });
       }
       if (rec) {
         var rs = sentences(rec);
-        T(sl, 6.85, 5.2, 6.0, 1.1, [rs.slice(0, -1).join('') || rec].concat(rs.length > 1 ? [[[rs[rs.length - 1], { b: true, c: NAVY }]]] : []), 12, { fill: LNAVY, shape: S.roundRect, valign: 'middle', margin: 8, min: 8, space: 3 });
+        T(sl, 6.85, 5.15, 6.0, 1.15, [rs.slice(0, -1).join('') || rec].concat(rs.length > 1 ? [[[rs[rs.length - 1], { b: true, c: NAVYD }]]] : []), 12, { fill: LNAVY, shape: S.roundRect, valign: 'middle', margin: 7, space: 2 });
       }
       var rest = (pE ? bulletsOf(pE.lines) : []).filter(function (b) { return !/^回収の見込み/.test(b); });
-      if (rest.length) T(sl, 6.85, 6.38, 6.0, 0.62, rest.join('　'), 9.5, { color: GREY, min: 7 });
+      if (rest.length) T(sl, 6.85, 6.38, 5.6, 0.68, rest.join('　'), 12, { color: GREY, margin: 1 });
     }
 
     // ---- 目標の根拠と道筋
@@ -912,7 +944,7 @@
         var rw = (12.33 - 0.15 * (reasons.length - 1)) / reasons.length;
         reasons.forEach(function (b, k) {
           var o = kv(b);
-          T(sl, 0.5 + k * (rw + 0.15), top, rw, 0.8, o.k ? [[[o.k, { b: true, c: NAVY }]], [[o.v, { s: 10 }]]] : [b], 11, { fill: LIGHT, shape: S.roundRect, valign: 'middle', margin: 6, min: 7.5 });
+          T(sl, 0.5 + k * (rw + 0.15), top, rw, 0.8, o.k ? [[[o.k, { b: true, c: NAVY }]], [[o.v, {}]]] : [b], 12, { fill: LIGHT, shape: S.roundRect, valign: 'middle', margin: 5 });
         });
         top += 0.95;
       }
@@ -920,7 +952,7 @@
       if (hasV) {
         var bars = [{ y: '今', v: 1.0, cap: '今', col: GFILL }].concat(rows.filter(function (r) { return r.v; }).map(function (r) { return { y: r.y, v: r.v, cap: r.title, col: NAVY }; }));
         var BASE = 5.85, maxV = Math.max.apply(null, bars.map(function (b) { return b.v; })), SC = (BASE - top - 0.85) / maxV, bwid = Math.min(1.25, 6.6 / bars.length - 0.35);
-        T(sl, 0.55, top, 5.0, 0.32, '目安（今を1とした倍率）【仮定】', 11, { bold: true, color: GREY, nofit: true });
+        T(sl, 0.55, top, 5.0, 0.32, '目安（今を1とした倍率）【仮定】', 12, { bold: true, color: GREY, nofit: true });
         bars.forEach(function (b, i) {
           var x = 0.75 + i * (7.0 / bars.length), hh = b.v * SC;
           box(sl, x, BASE - hh, bwid, hh, b.col, null, { rect: true });
@@ -930,14 +962,14 @@
         });
         vline(sl, 0.55, BASE, 7.6, BASE, GREY, 1.25);
       }
-      var ph = (6.5 - top - 0.15 * (rows.length - 1)) / rows.length;
+      var ph = (6.6 - top - 0.12 * (rows.length - 1)) / rows.length;
       rows.forEach(function (r, k) {
-        var y = top + k * (ph + 0.15);
+        var y = top + k * (ph + 0.12);
         box(sl, px, y, pwid, ph, WHITE, CARDLINE);
-        T(sl, px, y, 1.25, ph, [[[r.y, { b: true, s: 13, c: WHITE }]], [[r.title, { s: 9.5, c: WHITE }]]], 12, { fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', min: 7 });
-        T(sl, px + 1.35, y + 0.08, pwid - 1.45, ph - 0.12, r.items.concat(r.state ? [r.state] : []), 11, { bullet: true, min: 7.5, space: 3 });
+        T(sl, px, y, 1.25, ph, [[[r.y, { b: true, s: 14, c: WHITE }]], [[r.title, { c: WHITE }]]], 12, { fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', margin: 3 });
+        T(sl, px + 1.32, y + 0.04, pwid - 1.38, ph - 0.06, r.items.concat(r.state ? [r.state] : []), 12, { bullet: true, space: 1, margin: 2 });
       });
-      if (after.length) T(sl, 0.5, 6.6, 12.33, 0.42, after.join('　'), 10, { color: GREY, min: 7.5 });
+      if (after.length) T(sl, 0.5, 6.68, 11.3, 0.38, after.join('　'), 12, { color: GREY });
     }
 
     // ---- リスク
@@ -1045,8 +1077,9 @@
     // ページ番号（表紙を除く）
     pages.forEach(function (sl, i) {
       if (i === 0) return;
-      sl.addText((i + 1) + ' / ' + pages.length, { x: W - 1.3, y: H - 0.32, w: 0.9, h: 0.28, fontFace: FONT, fontSize: 9, color: GREY, align: 'right', margin: 0 });
+      sl.addText((i + 1) + ' / ' + pages.length, { x: W - 1.3, y: H - 0.32, w: 0.9, h: 0.28, fontFace: FONT, fontSize: MINPT, color: GREY, align: 'right', margin: 0 });
     });
+    pptx.__overflow = overflow;
     return pptx;
   }
 
