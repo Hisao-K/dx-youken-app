@@ -15,10 +15,11 @@
  */
 (function (root) {
   'use strict';
-  // 配色（2026-11-14 久夫さん「ちょっと暗い。洗練された配色に」）：濃い紺の塗りをやめ、明るい青（スチールブルー）を基本に、
-  // 白地を広く・枠は淡い青・帯は薄い面にして軽く見せる。オレンジ（ブランド・当社）と赤（課題）の決まりはそのまま
-  var ORANGE = 'E7741D', NAVY = '3A6EA5', NAVYD = '23466F', RED = 'C8463A', GREY = '6B7280', GFILL = 'A7AFBA', INK = '2B2F36', LINE = 'D3DAE3';
-  var LIGHT = 'F5F7FA', LNAVY = 'EBF2F9', CARDLINE = 'C5D5E8', LRED = 'FDEEEC', KBT = 'FDF1E7', WHITE = 'FFFFFF';
+  // 配色（2026-11-14 久夫さん決定）：ウォームグレー（赤みの弱いあたたかいグレー）＋オレンジ。
+  // 「暗い」→ 濃い紺の塗りをやめて白地を広く・枠は淡く・帯は薄い面に。スチールブルー・チャコール・スレート・ローズグレーと見比べて、
+  // オレンジ（ブランド・当社）となじみ、赤（課題）と見分けやすいウォームグレーにした。変数名の NAVY は「基本の色」の意味で残している
+  var ORANGE = 'E7741D', NAVY = '7D716A', NAVYD = '4A403B', RED = 'B04A42', GREY = '756D68', GFILL = 'CFC8C3', INK = '332D2A', LINE = 'E6E0DB';
+  var LIGHT = 'F9F7F5', LNAVY = 'F4F0ED', CARDLINE = 'E0D7D1', LRED = 'FAEEEC', KBT = 'FDF1E7', WHITE = 'FFFFFF';
   var FONT = 'Meiryo', W = 13.33, H = 7.5;
   // 差出人（表紙）は屋号だけ（2026-11-14 久夫さん決定。個人の名前は入れない）
   var PRESENTER_SUB = 'DX推進・生成AI導入支援／経済産業省 DX認定事業者';
