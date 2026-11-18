@@ -2235,9 +2235,15 @@
       var q = el('textarea', { class: 'item', value: it.item, oninput: function () { state.dirty = true; } });
       var a = el('textarea', { class: 'ans', value: it.answer || '', oninput: function () { state.dirty = true; } });
       var u = el('input', { type: 'checkbox', class: 'unk', checked: !!it.unknown, onchange: function () { state.dirty = true; } });
+      // 選択肢（2026-11-19 久夫さん指示：基本は選んで答える形。空なら入力で答える形。質問票では「その他」を自動で付ける）
+      var ch = el('input', { class: 'choices', value: (it.choices || []).join('／'), placeholder: '選択肢を「／」で区切って入れる（空なら入力で答える問い）', oninput: function () { state.dirty = true; } });
+      var mu = el('input', { type: 'checkbox', class: 'multi', checked: !!it.multi, onchange: function () { state.dirty = true; } });
       var tr = el('tr', {}, [
         el('td', { class: 'no', text: String(it.no) }),
-        el('td', {}, [q, el('button', { class: 'link small', text: 'この問いを消す', onclick: function () { tr.remove(); state.dirty = true; } })]),
+        el('td', {}, [q,
+          el('label', { class: 'choices-label' }, ['選択肢', ch]),
+          el('label', { class: 'unknown' }, [mu, ' 複数選べる']),
+          el('button', { class: 'link small', text: 'この問いを消す', onclick: function () { tr.remove(); state.dirty = true; } })]),
         el('td', {}, [a, el('label', { class: 'unknown' }, [u, ' 【要確認】のまま']), it.source ? el('div', { class: 'src', text: '出どころ：' + it.source }) : null]),
       ]);
       tr.dataset.group = it.group || 'other';
@@ -2282,9 +2288,11 @@
     document.querySelectorAll('#hearing tr').forEach(function (tr) {
       var q = tr.querySelector('textarea.item');
       if (!q) return;
+      var chs = tr.querySelector('input.choices'), mul = tr.querySelector('input.multi');
       out.push({
         no: out.length + 1, item: q.value, answer: tr.querySelector('textarea.ans').value, unknown: tr.querySelector('input.unk').checked,
         group: tr.dataset.group, oral: !!tr.dataset.oral, manual: !!tr.dataset.manual, source: tr.dataset.source,
+        choices: chs ? chs.value.split('／').map(function (s) { return s.trim(); }).filter(String) : [], multi: !!(mul && mul.checked),
       });
     });
     return out;

@@ -131,6 +131,9 @@ table.hearing th, table.hearing td { border: 1px solid var(--line); padding: 6px
 table.hearing th { background: var(--panel); text-align: left; }
 table.hearing td.no { width: 2.4em; text-align: center; color: var(--sub); }
 table.hearing textarea { min-height: 3.2em; padding: 6px 8px; font-size: 15px; }
+table.hearing .choices-label { display: block; margin-top: 4px; font-size: 13px; color: var(--sub); }
+table.hearing td > label.unknown { display: inline-block; margin: 4px 16px 0 0; }
+table.hearing input.choices { width: 100%; box-sizing: border-box; padding: 5px 8px; font-size: 14px; margin-top: 2px; }
 table.hearing .src { font-size: 12px; color: var(--sub); }
 table.hearing .unknown { font-size: 13px; color: var(--sub); white-space: nowrap; }
 table.hearing tr.grp th { border-left: 4px solid var(--orange); }
