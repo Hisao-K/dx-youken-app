@@ -16,7 +16,7 @@
 
   var state = {
     apiUrl: '', idToken: '', session: 0, tokenWaiters: [],
-    cfg: null, caseId: '', c: null, tab: 'reg', matOpen: {}, hosokuOpen: {}, dirty: false, uploading: false, pollTimer: 0,
+    cfg: null, caseId: '', c: null, tab: 'co', matOpen: {}, hosokuOpen: {}, dirty: false, uploading: false, pollTimer: 0,
   };
 
   // =========================
@@ -312,7 +312,7 @@
       if (!res) return;
       $('new-form').reset();
       $('new-form').hidden = true;
-      openCase(res.case.id, 'reg').then(function () {
+      openCase(res.case.id, 'co').then(function () {
         msg('case-msg', '登録しました。会社情報の取得を始めています（1〜2分。裏で進むので、そのまま材料を入れて構いません）。', 'ok');
       });
     });
@@ -412,7 +412,7 @@
     ]);
     document.querySelectorAll('.tabs button').forEach(function (b) {
       var t = b.dataset.tab;
-      var label = { reg: '会社・要件', s3: '目的・課題', s4: '対策', s5: '分析' }[t];
+      var label = { co: '会社', req: '要件', s3: '目的・課題', s4: '対策', s5: '分析' }[t];
       var s = c.steps[t];
       if (s) label += s.deskPending ? ' 🕐' : s.review === 'needed' && s.content ? ' ●' : s.ok ? ' ✓' : '';
       if (s && s.stale) label += '！';
@@ -422,6 +422,8 @@
   }
 
   function isStepTab() { return ['s3', 's4', 's5'].indexOf(state.tab) >= 0; }
+  /** 会社のタブと要件のタブ（2026-11-19 久夫さん指示で「会社・要件」を2つに分けた。描く場所は同じ tab-reg） */
+  function isRegTab() { return state.tab === 'co' || state.tab === 'req'; }
 
   document.querySelectorAll('.tabs button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -435,13 +437,14 @@
   });
 
   function renderTab() {
-    $('tab-reg').hidden = state.tab !== 'reg';
+    $('tab-reg').hidden = !isRegTab();
     $('tab-step').hidden = !isStepTab();
     // 材料を入れる欄はタブごとに1つだけ置く（同じ id の欄が隠れたタブに残らないように、見ていないタブは空にする）
-    if (state.tab !== 'reg') $('tab-reg').replaceChildren();
+    if (!isRegTab()) $('tab-reg').replaceChildren();
     if (!isStepTab()) $('tab-step').replaceChildren();
     msg('case-msg', '');
-    if (state.tab === 'reg') renderReg();
+    if (state.tab === 'co') renderCompany();
+    else if (state.tab === 'req') renderReq();
     else renderStep(state.tab);
   }
 
@@ -520,7 +523,7 @@
   /**
    * 方針0〜2・方針3〜5のタブで入れられる種類と、その呼び方（2026-11-05 久夫さん指示）。
    * この段で要件の文書や事前アンケートを入れることはないので、打ち合わせの録音・メモと、
-   * 方針0〜2で書き出した追加の質問票の回答だけにする。データの種類（text・audio・survey）は会社・要件のタブと同じ。
+   * 方針0〜2で書き出した追加の質問票の回答だけにする。データの種類（text・audio・survey）は要件のタブと同じ。
    */
   var STEP_KINDS = { s3: ['audio', 'text', 'survey'], s4: ['audio', 'text'] };
   var STEP_KIND_LABEL = { text: '打ち合わせのメモ', audio: '打ち合わせの録音', survey: '追加の質問票の回答' };
@@ -535,10 +538,10 @@
   function kindLabel(m) { return (STEP_KINDS[m.step] && STEP_KIND_LABEL[m.kind]) || KIND_LABEL[m.kind] || m.kind; }
 
   /** 材料を入れるタブの名前 */
-  function placeName(step) { return step === 's3' ? '目的・課題' : step === 's4' ? '対策' : '会社・要件'; }
+  function placeName(step) { return step === 's3' ? '目的・課題' : step === 's4' ? '対策' : '要件'; }
 
   // =========================
-  //  このアプリで録音する（2026-11-05 久夫さん指示。会社・要件／方針0〜2／方針3〜5のどのタブでも同じ仕組み）
+  //  このアプリで録音する（2026-11-05 久夫さん指示。要件／方針0〜2／方針3〜5のどのタブでも同じ仕組み）
   // =========================
   /**
    * 録音は、画面の描き直し（処理の進み具合の読み直し・タブの切り替え）で止まらないよう、入力欄の外で持つ。
@@ -726,7 +729,7 @@
     };
   })();
 
-  /** opts: { step: 入れたタブ（s3・s4。会社・要件のタブなら空）, kind: 最初に選んでおく種類, title: 見出し } */
+  /** opts: { step: 入れたタブ（s3・s4。要件のタブなら空）, kind: 最初に選んでおく種類, title: 見出し } */
   function addMaterialForm(opts) {
     opts = opts || {};
     var inStep = !!STEP_KINDS[opts.step];
@@ -1036,7 +1039,8 @@
   // =========================
   //  登録
   // =========================
-  function renderReg() {
+  /** 会社のタブ：相談先・会社名・相談の出どころと、会社情報（2026-11-19 「会社・要件」から分けた） */
+  function renderCompany() {
     var c = state.c;
     var org = c.org_type === 'municipality' ? 'municipality' : 'company';
     var word = org === 'municipality' ? '自治体他' : '会社';
@@ -1048,7 +1052,6 @@
       el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'company', checked: org === 'company' }), ' 会社']),
       el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'municipality', checked: org === 'municipality' }), ' 自治体他'])]);
     [company, source].forEach(function (x) { x.addEventListener('input', function () { state.dirty = true; }); });
-    var allMats = (c.materials || []).concat(c.companySurveys || []);
     put($('tab-reg'), [
       el('div', { class: 'panel' }, [
         el('div', { class: 'sub', text: '案件名：' + c.title + '／フォルダ：案件／' + (c.subdir ? c.subdir + '／' : '') + c.title + '（会社名を直しても、フォルダは動きません）' }),
@@ -1065,10 +1068,6 @@
           } }),
         ]),
       ]),
-      el('h3', { text: '要件（材料）' }),
-      el('p', { class: 'sub', text: '目的・課題と対策を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。打ち合わせの録音は、目的・課題・対策のタブからも入れられます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
-      allMats.length ? materialList(allMats) : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
-      addMaterialForm({ kind: 'text' }),
       el('h3', { text: word + '情報' }),
       c.company_info_stale ? el('div', { class: 'warn', text: '名前か種類を直した後、情報を取得し直していません。' }) : null,
       c.companyError ? el('div', { class: 'errbox', text: c.companyError }) : null,
@@ -1079,6 +1078,18 @@
       ]),
       (c.company_url || c.company_hint) ? el('div', { class: 'sub', text: '調べた条件：' + [c.company_url ? '公式サイト ' + c.company_url : '', c.company_hint ? '特徴「' + c.company_hint + '」' : ''].filter(String).join('／') }) : null,
       c.company_info ? el('div', { class: 'readonly', text: c.company_info }) : null,
+    ]);
+  }
+
+  /** 要件のタブ：要件（材料）の一覧と、材料を入れる欄（2026-11-19 「会社・要件」から分けた） */
+  function renderReq() {
+    var c = state.c;
+    var allMats = (c.materials || []).concat(c.companySurveys || []);
+    put($('tab-reg'), [
+      el('h3', { text: '要件（材料）' }),
+      el('p', { class: 'sub', text: '目的・課題と対策を作るときに使う入力です。要件の文章・録音・アンケートの結果を、何本でも入れられます。打ち合わせの録音は、目的・課題・対策のタブからも入れられます。アンケートの結果は会社のフォルダ（案件／会社名／アンケート）に置き、同じ会社のどの案件からも使えます。' }),
+      allMats.length ? materialList(allMats) : el('p', { class: 'sub', text: 'まだ材料はありません。' }),
+      addMaterialForm({ kind: 'text' }),
     ]);
   }
 
