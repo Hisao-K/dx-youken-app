@@ -2241,15 +2241,46 @@
       var a = el('textarea', { class: 'ans', value: it.answer || '', oninput: function () { state.dirty = true; } });
       var u = el('input', { type: 'checkbox', class: 'unk', checked: !!it.unknown, onchange: function () { state.dirty = true; } });
       // 選択肢（2026-11-19 久夫さん指示：基本は選んで答える形。空なら入力で答える形。質問票では「その他」を自動で付ける）
-      var ch = el('input', { class: 'choices', value: (it.choices || []).join('／'), placeholder: '選択肢を「／」で区切って入れる（空なら入力で答える問い）', oninput: function () { state.dirty = true; } });
-      var mu = el('input', { type: 'checkbox', class: 'multi', checked: !!it.multi, onchange: function () { state.dirty = true; } });
+      // 2026-11-19 久夫さん指示：回答は選択肢を打つのでなく、回答の列のチェックボックスで選ぶ。選択肢そのものは「選択肢を直す」を開いて直す
+      var ch = el('input', { class: 'choices', value: (it.choices || []).join('／'), placeholder: '選択肢を「／」で区切って入れる（空なら入力で答える問い）', oninput: function () { state.dirty = true; drawAns(); } });
+      var mu = el('input', { type: 'checkbox', class: 'multi', checked: !!it.multi, onchange: function () { state.dirty = true; drawAns(); } });
+      var picks = el('div', { class: 'picks' });
+      /** 選んだ選択肢と「その他」の文から回答の文を作る（フォームの回答と同じく「、」でつなぐ） */
+      function syncAns() {
+        var got = [];
+        picks.querySelectorAll('input.pick').forEach(function (cb) { if (cb.checked) got.push(cb.dataset.v); });
+        var other = picks.querySelector('.pick-other');
+        if (other && other.value.trim()) got.push(other.value.trim());
+        a.value = got.join('、');
+        state.dirty = true;
+      }
+      function drawAns() {
+        var list = choiceList(ch.value);
+        if (list.length < 2) { a.hidden = false; picks.hidden = true; picks.replaceChildren(); return; }
+        var p = splitAnswer(a.value, list);
+        a.hidden = true; picks.hidden = false;
+        var boxes = list.map(function (s) {
+          var cb = el('input', { type: 'checkbox', class: 'pick', checked: p.picked.indexOf(s) >= 0, onchange: function () {
+            // 1つだけ選ぶ問いは、ほかの選択肢のチェックを外す
+            if (cb.checked && !mu.checked) picks.querySelectorAll('input.pick').forEach(function (x) { if (x !== cb) x.checked = false; });
+            syncAns();
+          } });
+          cb.dataset.v = s;
+          return el('label', { class: 'pick-label' }, [cb, ' ' + s]);
+        });
+        picks.replaceChildren.apply(picks, [el('div', { class: 'pick-hint', text: mu.checked ? '当てはまるものをすべて選ぶ' : '1つ選ぶ' })].concat(boxes, [
+          el('label', { class: 'pick-label other' }, ['その他：', el('input', { class: 'pick-other', value: p.other, placeholder: '選択肢にないとき', oninput: syncAns })]),
+        ]));
+      }
+      drawAns();
       var tr = el('tr', {}, [
         el('td', { class: 'no', text: String(it.no) }),
         el('td', {}, [q,
-          el('label', { class: 'choices-label' }, ['選択肢', ch]),
-          el('label', { class: 'unknown' }, [mu, ' 複数選べる']),
+          el('details', { class: 'choices-edit' }, [el('summary', { text: '選択肢を直す' }),
+            el('label', { class: 'choices-label' }, ['選択肢', ch]),
+            el('label', { class: 'unknown' }, [mu, ' 複数選べる'])]),
           el('button', { class: 'link small', text: 'この問いを消す', onclick: function () { tr.remove(); state.dirty = true; } })]),
-        el('td', {}, [a, el('label', { class: 'unknown' }, [u, ' 【要確認】のまま']), it.source ? el('div', { class: 'src', text: '出どころ：' + it.source }) : null]),
+        el('td', {}, [picks, a, el('label', { class: 'unknown' }, [u, ' 【要確認】のまま']), it.source ? el('div', { class: 'src', text: '出どころ：' + it.source }) : null]),
       ]);
       tr.dataset.group = it.group || 'other';
       tr.dataset.oral = it.oral ? '1' : '';
@@ -2286,6 +2317,33 @@
       });
     }
     return table;
+  }
+
+  /** 「／」区切りの選択肢を配列にする（「その他」と重なりは外す。質問票の側でも「その他」は自動で付く） */
+  function choiceList(s) {
+    var out = [];
+    String(s || '').split('／').forEach(function (x) { x = x.trim(); if (x && !/^その他/.test(x) && out.indexOf(x) < 0) out.push(x); });
+    return out;
+  }
+  /**
+   * 回答の文を、選んだ選択肢とそれ以外（その他）に分ける。フォームの回答は「、」でつながって入るので、
+   * 長い選択肢から順に文の中から抜き出し、残りを「、」「／」で区切って同じ選択肢かを見る。合わない残りは「その他」に入れる
+   */
+  function splitAnswer(ans, list) {
+    var rest = String(ans || ''), picked = [];
+    list.slice().sort(function (x, y) { return y.length - x.length; }).forEach(function (s) {
+      if (!/[、／,，]/.test(s)) return;
+      var i = rest.indexOf(s);
+      if (i >= 0) { picked.push(s); rest = rest.slice(0, i) + '、' + rest.slice(i + s.length); }
+    });
+    var other = [];
+    rest.split(/[、／,，\n]/).forEach(function (x) {
+      x = x.trim().replace(/^その他[：:]\s*/, '');
+      if (!x) return;
+      if (list.indexOf(x) >= 0) { if (picked.indexOf(x) < 0) picked.push(x); }
+      else other.push(x);
+    });
+    return { picked: picked, other: other.join('、') };
   }
 
   function collectItems() {

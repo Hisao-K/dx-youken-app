@@ -135,6 +135,14 @@ table.hearing .choices-label { display: block; margin-top: 4px; font-size: 13px;
 table.hearing td > label.unknown { display: inline-block; margin: 4px 16px 0 0; }
 table.hearing input.choices { width: 100%; box-sizing: border-box; padding: 5px 8px; font-size: 14px; margin-top: 2px; }
 table.hearing .src { font-size: 12px; color: var(--sub); }
+/* 回答をチェックボックスで選ぶ（2026-11-19）。選択肢を直す欄はふだん閉じておく */
+table.hearing details.choices-edit { margin-top: 4px; font-size: 13px; color: var(--sub); }
+table.hearing details.choices-edit summary { cursor: pointer; }
+table.hearing .picks .pick-hint { font-size: 12px; color: var(--sub); margin-bottom: 2px; }
+table.hearing .picks label.pick-label { display: block; padding: 3px 0; cursor: pointer; }
+table.hearing .picks label.pick-label input.pick { width: 18px; height: 18px; vertical-align: -3px; }
+table.hearing .picks label.other { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+table.hearing .picks input.pick-other { flex: 1; min-width: 0; padding: 4px 8px; font-size: 14px; }
 table.hearing .unknown { font-size: 13px; color: var(--sub); white-space: nowrap; }
 table.hearing tr.grp th { border-left: 4px solid var(--orange); }
 /* スマホの幅では、問いと回答を縦に並べる */
