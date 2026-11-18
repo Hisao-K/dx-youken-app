@@ -1079,14 +1079,38 @@
       c.company_info_stale ? el('div', { class: 'warn', text: '名前か種類を直した後、情報を取得し直していません。' }) : null,
       c.companyError ? el('div', { class: 'errbox', text: c.companyError }) : null,
       el('div', { class: 'row' }, [
-        el('button', { text: c.company_info ? '取得し直す' : word + '情報を取得', onclick: function () {
-          call('companyInfo', { caseId: c.id }, '受け付けています…', 'case-msg').then(function (r) { after(r, '受け付けました。1〜2分で取れます（裏で進みます）'); });
-        } }),
+        // 2026-11-18 久夫さん指示：押したら公式サイトの URL と特徴を入れる画面を出し、その内容で調べ直す
+        el('button', { text: c.company_info ? '取得し直す' : word + '情報を取得', onclick: function () { openCompanyDialog(c, word); } }),
         el('span', { class: 'sub', text: c.company_info_updated ? '取得 ' + hm(c.company_info_updated) : 'Google 検索で公開情報を集めます' }),
       ]),
+      (c.company_url || c.company_hint) ? el('div', { class: 'sub', text: '調べた条件：' + [c.company_url ? '公式サイト ' + c.company_url : '', c.company_hint ? '特徴「' + c.company_hint + '」' : ''].filter(String).join('／') }) : null,
       c.company_info ? el('div', { class: 'readonly', text: c.company_info }) : null,
     ]);
   }
+
+  /**
+   * 会社情報を取得し直す画面（2026-11-18 久夫さん指示）。同じ名前の別の会社の情報が取れて直せなかったため、
+   * 公式サイトの URL と特徴を入れてもらい、その内容で調べ直す。前に入れた内容（なければ参照URLの1件目）を初めから入れておく
+   */
+  var coDialogCase = null;
+  function openCompanyDialog(c, word) {
+    coDialogCase = c;
+    $('dlg-co-title').textContent = word + '情報を' + (c.company_info ? '取得し直す' : '取得する');
+    $('dlg-co-url').value = c.company_url || (c.ref_urls || [])[0] || '';
+    $('dlg-co-hint').value = c.company_hint || '';
+    $('dlg-co-msg').textContent = '';
+    $('dlg-co').showModal();
+  }
+  $('dlg-co-cancel').addEventListener('click', function () { $('dlg-co').close(); });
+  $('dlg-co-ok').addEventListener('click', function () {
+    var c = coDialogCase, url = $('dlg-co-url').value.trim(), hint = $('dlg-co-hint').value.trim();
+    if (!c) return;
+    if (url && !/^https?:\/\/\S+$/.test(url)) { $('dlg-co-msg').textContent = '公式サイトの URL は http:// か https:// で始めてください'; return; }
+    $('dlg-co').close();
+    call('companyInfo', { caseId: c.id, company_url: url, company_hint: hint }, '受け付けています…', 'case-msg').then(function (r) {
+      after(r, '受け付けました。入れた公式サイト・特徴で調べ直します（1〜2分。裏で進みます）');
+    });
+  });
 
   // =========================
   //  段（方針0〜2・方針3〜5・分析）

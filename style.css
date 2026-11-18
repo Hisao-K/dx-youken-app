@@ -193,6 +193,9 @@ table.strat th { background: var(--panel); white-space: nowrap; }
 .dlg::backdrop { background: rgba(0, 0, 0, .35); }
 .dlg h3 { margin-top: 4px; }
 .dlg textarea { min-height: 55vh; }
+.dlg.dlg-small { width: min(640px, calc(100vw - 24px)); }
+.dlg.dlg-small textarea { min-height: 0; }
+.dlg.dlg-small input { width: 100%; box-sizing: border-box; }
 
 /* 材料を反映した案の確認欄（2026-11-05） */
 .proposal { border: 2px solid #E7741D; }

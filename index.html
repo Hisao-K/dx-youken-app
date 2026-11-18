@@ -101,6 +101,19 @@
     </div>
   </dialog>
 
+  <!-- 会社情報を取得し直すときに、公式サイトの URL と特徴を入れる（2026-11-18） -->
+  <dialog id="dlg-co" class="dlg dlg-small">
+    <h3 id="dlg-co-title">会社情報を取得し直す</h3>
+    <p class="sub">同じ名前の別の会社と取り違えないよう、正しい会社の公式サイトと特徴を入れてください。入れた内容で調べ直します（1〜2分）。</p>
+    <label class="field">公式サイトの URL（分かれば）<input id="dlg-co-url" type="url" maxlength="500" placeholder="https://example.co.jp/"></label>
+    <label class="field">特徴（所在地・業種・事業・代表者など。取り違えを防ぐ手がかり）<textarea id="dlg-co-hint" rows="4" maxlength="1000" placeholder="例：福岡市で美容室を2店舗運営。代表は山田さん"></textarea></label>
+    <p id="dlg-co-msg" class="msg"></p>
+    <div class="row">
+      <button id="dlg-co-ok" class="primary">この内容で調べ直す</button>
+      <button id="dlg-co-cancel">やめる</button>
+    </div>
+  </dialog>
+
   <script src="proposal.js"></script>
   <script src="app.js"></script>
 </body>
