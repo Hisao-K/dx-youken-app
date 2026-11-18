@@ -1042,13 +1042,12 @@
     var word = org === 'municipality' ? '自治体他' : '会社';
     var company = el('input', { value: c.company, maxlength: '100' });
     var source = el('input', { value: c.source, maxlength: '200' });
-    var memo = el('textarea', { rows: '4', value: c.memo || '' });
-    var refs = el('textarea', { rows: '2', value: (c.ref_urls || []).join('\n') });
-    var summary = el('textarea', { rows: '6', value: c.original_summary || '' });
+    // 2026-11-19 久夫さん指示：「議論のメモ」「参照URL」「材料の要点」の欄と「材料から要点を整理」は、使い方が分からないため画面から外した。
+    // 前に入れた内容は案件に残し、これまでどおり使う（議論のメモは AI に渡す・参照URLは会社情報の取得で読む）。公式サイトは「取得し直す」の画面で入れる
     var orgs = el('div', { class: 'radios' }, ['相談先',
       el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'company', checked: org === 'company' }), ' 会社']),
       el('label', {}, [el('input', { type: 'radio', name: 'r-org', value: 'municipality', checked: org === 'municipality' }), ' 自治体他'])]);
-    [company, source, memo, refs, summary].forEach(function (x) { x.addEventListener('input', function () { state.dirty = true; }); });
+    [company, source].forEach(function (x) { x.addEventListener('input', function () { state.dirty = true; }); });
     var allMats = (c.materials || []).concat(c.companySurveys || []);
     put($('tab-reg'), [
       el('div', { class: 'panel' }, [
@@ -1056,18 +1055,13 @@
         orgs,
         el('label', { class: 'field' }, [word + '名（情報を調べるためだけに使う。分析のファイルには書かない）', company]),
         el('label', { class: 'field' }, ['相談の出どころ', source]),
-        el('label', { class: 'field' }, ['議論のメモ（任意）', memo]),
-        el('label', { class: 'field' }, ['参照URL（1行に1つ。入れると、情報の取得はこのページだけを読む）', refs]),
-        el('label', { class: 'field' }, ['材料の要点（AIで整理。直してもよい）', summary]),
         el('div', { class: 'row' }, [
           el('button', { class: 'primary', text: '登録内容を保存', onclick: function () {
+            // 議論のメモは画面にないので、今の内容をそのまま送る（送らないと空になる）。参照URL・材料の要点は送らない（前の内容のまま）
             call('updateRegistration', {
-              caseId: c.id, company: company.value, source: source.value, memo: memo.value, ref_urls: refs.value, original_summary: summary.value,
+              caseId: c.id, company: company.value, source: source.value, memo: c.memo || '',
               org_type: document.querySelector('input[name="r-org"]:checked').value,
             }, '保存しています…', 'case-msg').then(function (r) { if (r) after(r, (r.notes || []).join('\n') || '保存しました'); });
-          } }),
-          el('button', { text: '材料から要点を整理', onclick: function () {
-            call('summarize', { caseId: c.id }, '整理しています…', 'case-msg').then(function (r) { after(r, '要点を整理しました'); });
           } }),
         ]),
       ]),
