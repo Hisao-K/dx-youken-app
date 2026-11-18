@@ -1350,6 +1350,8 @@
         parts.push(el('h3', { text: 'ヒアリング項目と回答' }));
         hearing = hearingTable(s.items || []);
         parts.push(hearing);
+        var dd = dedupeNote(s.lastDedupe);
+        if (dd) parts.push(dd);
         parts.push(el('div', { class: 'row' }, [
           el('button', { text: '質問票（Word）を書き出す', onclick: function () {
             if (state.dirty) { alert('先に「手で直した内容を保存」を押してください（質問票は保存した問いから作ります）'); return; }
@@ -2230,6 +2232,23 @@
     return box;
   }
 
+
+  /**
+   * 同じ質問の確認の結果（2026-11-19 久夫さん指示：最後に同じ質問がないかを確かめる）。
+   * Gemini で作った後に自動で見て、重なった問いを1つにまとめる。まとめた問いと理由を出す（戻したいときは手で問いを足す）
+   */
+  function dedupeNote(d) {
+    if (!d) return null;
+    if (d.error) return el('div', { class: 'warn', text: d.error + '。手で見直してください' });
+    var m = d.merged || [];
+    if (!m.length) return el('p', { class: 'sub', text: '同じ質問がないかを確かめました：重なった問いはありません（' + hm(d.time) + '）' });
+    return el('details', { class: 'dedupe' }, [
+      el('summary', { text: '同じ質問を' + m.length + '問まとめました（' + hm(d.time) + '）。開くと、外した問いと理由が見られます' }),
+      el('ul', {}, m.map(function (x) {
+        return el('li', { text: '外した問い「' + x.item + '」→ 残した問い「' + x.into + '」' + (x.reason ? '（' + x.reason + '）' : '') });
+      })),
+    ]);
+  }
 
   /** ヒアリング項目の表（区分ごと。問い・回答・【要確認】・出どころ） */
   function hearingTable(items) {
