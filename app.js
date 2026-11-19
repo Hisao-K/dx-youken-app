@@ -327,7 +327,7 @@
     state.dirty = false;
     state.c = null;
     state.caseId = '';
-    $('bar-title').textContent = 'DX要件定義';
+    $('bar-title').textContent = 'こんさる達人';
     show('list');
     loadCases();
   });

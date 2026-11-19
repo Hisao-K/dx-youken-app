@@ -1,6 +1,6 @@
 {
-  "name": "DX要件定義",
-  "short_name": "DX要件定義",
+  "name": "こんさる達人",
+  "short_name": "こんさる達人",
   "description": "要件の文章・録音・アンケートから、DX要件分析の方針と質問を作るアプリ",
   "lang": "ja",
   "display": "standalone",
