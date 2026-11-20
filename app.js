@@ -2115,7 +2115,7 @@
     }
     function row(x) {
       return el('li', { class: 'comment st-' + x.status }, [
-        el('span', { class: 'badge ' + (x.status === 'open' ? 'st-run' : x.status === 'applied' ? 'st-done' : 'st-wait'), text: COMMENT_STATUS[x.status] || x.status }),
+        el('span', { class: 'badge ' + (x.status === 'open' ? 'st-run' : x.status === 'applied' ? 'st-done' : 'st-wait'), text: (COMMENT_STATUS[x.status] || x.status) + (x.status === 'open' && x.deskAt ? '（デスクに依頼中）' : '') }),
         el('span', { class: 'sub', text: ' ' + hm(x.time) + ' ' }),
         el('span', { class: 'comment-text', text: x.text }),
         x.status === 'dropped' ? null : el('button', { class: 'link small', text: x.status === 'open' ? '消す' : '外す', onclick: function () {
@@ -2127,8 +2127,10 @@
     }
     var box = el('details', { class: 'panel comments' }, [
       el('summary', { text: '久夫さんのコメント（' + what + 'の見直し）' + (open.length ? '：未反映 ' + open.length + '件' : list.length ? '：' + list.length + '件' : '') }),
-      el('p', { class: 'sub', text: 'コメントを足して「コメントで見直す」を押すと、Gemini がコメントに従って' + what + 'を見直した案を作ります（1〜2分）。' +
-        '案は、今の内容との違いを見て「反映する」を押したときだけ入ります。反映したコメントは「反映済み」になり、外すまでは、作り直し・材料を反映した案・デスクへの依頼でも守られます。' }),
+      el('p', { class: 'sub', text: 'コメントを足して、見直す人を選んで押します。' +
+        '「コメントで見直す（Gemini）」は、Gemini がコメントに従って' + what + 'を見直した案を作ります（1〜2分）。今の内容との違いを見て「反映する」を押したときだけ入ります。' +
+        '「コメントで見直す（デスク）」は、家のPCのデスクに依頼を置きます。届いた版を「デスクの版を取り込む」で反映します。' +
+        '反映したコメントは「反映済み」になり、外すまでは、作り直し・材料を反映した案・デスクへの依頼でも守られます。' }),
       list.length ? el('ul', { class: 'comment-list' }, list.map(row)) : null,
       ta,
       el('div', { class: 'row' }, [
@@ -2145,6 +2147,16 @@
           if (!confirm('未反映のコメント' + open.length + '件に従って、' + what + 'を見直した案を作ります（1〜2分）。\n案ができたら、今の内容との違いを見て「反映する」を押したときだけ入ります。作りますか？')) return;
           call('reviewByComments', { caseId: c.id, step: step }, '受け付けています…', 'case-msg').then(function (r) {
             after(r, '受け付けました。コメントで見直した案を作っています（1〜2分。裏で進みます）。できると、この画面の上に今の内容との違いが出ます');
+          });
+        } }),
+        // 2026-11-20 久夫さん指示：見直し→反映を Gemini かデスクか選べる。デスクは依頼のファイルを置き、届いた版を「デスクの版を取り込む」で反映する
+        el('button', { class: 'small', text: 'コメントで見直す（デスク）', disabled: !open.length || !s.content, onclick: function () {
+          if (!needSaved()) return;
+          if (!confirm('未反映のコメント' + open.length + '件に従って見直すよう、家のPCのデスクに頼みます。\n' +
+            (s.deskPending ? 'この段には、まだ片づいていないデスクへの依頼があります。もう1件置きます。\n' : '') +
+            'デスクの版が届いたら、画面の上の「デスクの版を取り込む」で反映します（取り込むと、依頼したコメントは「反映済み」になります）。頼みますか？')) return;
+          call('requestDesk', { caseId: c.id, step: step, mode: 'revise', instruction: '', materialIds: [], comment: true }, '依頼を置いています…', 'case-msg').then(function (r) {
+            after(r, 'デスクへの依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください。届いた版は「デスクの版を取り込む」で反映します');
           });
         } }),
         !s.content ? el('span', { class: 'sub', text: 'まだ中身がありません。足したコメントは「Gemini で作る」「デスクに頼む」でも守られます' })
