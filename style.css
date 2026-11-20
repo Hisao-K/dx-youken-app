@@ -103,6 +103,14 @@ textarea { resize: vertical; }
 .st-run { color: var(--orange); }
 .st-wait { color: var(--sub); }
 
+/* 久夫さんのコメント（2026-11-20） */
+details.comments > summary { cursor: pointer; font-weight: 700; }
+ul.comment-list { list-style: none; padding: 0; margin: 8px 0; }
+ul.comment-list li { padding: 6px 0; border-bottom: 1px solid var(--line); line-height: 1.6; }
+ul.comment-list li.st-dropped .comment-text { color: var(--sub); text-decoration: line-through; }
+ul.comment-list .comment-text { white-space: pre-wrap; }
+textarea.comment-input { width: 100%; box-sizing: border-box; margin-top: 6px; }
+
 /* 材料 */
 .mat { background: var(--panel); border-radius: 10px; padding: 10px 12px; }
 .mat .head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
