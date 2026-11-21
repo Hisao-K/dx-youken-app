@@ -1336,11 +1336,11 @@
           // 簡易提案書（6ページ）をデスクに頼む（2026-11-21 久夫さん指示）。デスクがスキル simple-proposal で作り、案件フォルダに置く
           el('button', { class: 'small', text: '簡易提案書をデスクに頼む', onclick: function () {
             if (state.dirty) { alert('先に「保存」を押してください（簡易提案書は保存した内容から作ります）'); return; }
-            if (!confirm('目的・課題・対策・分析から、6ページの簡易提案書（表紙・今の課題・対策の全体・対策の一覧と日程・計画・費用と効果）を作る依頼を、家のPCのデスクに置きます。\nできた資料は案件フォルダに入ります（アプリには取り込みません）。\n依頼を置きますか？')) return;
+            if (!confirm('目的・課題・対策・分析から、6ページの簡易提案書（表紙・今の課題・対策の全体・対策の一覧と日程・計画・費用と効果）を作る依頼を、家のPCのデスクに置きます。\nできた資料は案件フォルダに入り、このタブの「簡易提案書を書き出す」で書き出せます。\n依頼を置きますか？')) return;
             call('requestDesk', { caseId: c.id, step: 's5', mode: 'make', instruction: '', materialIds: [], proposal: true }, '依頼を置いています…', 'case-msg')
-              .then(function (r) { after(r, '簡易提案書の依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください。できた資料は案件フォルダに入ります'); });
+              .then(function (r) { after(r, '簡易提案書の依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください。できたら、このタブの「簡易提案書を書き出す」で書き出せます'); });
           } }),
-        ]));
+        ].concat(proposalButtons(c))));
       }
       if (step === 's4') {
         // 方針0〜5を打ち合わせ用の資料にして PDF に出す（2026-11-06 久夫さん指示）
@@ -1574,6 +1574,29 @@
     });
     flushTable(); flushText();
     return out;
+  }
+
+  /** デスクが作った簡易提案書を書き出すボタン（2026-11-21 久夫さん指示「作成完了したら画面から書き出せるように」）。
+   *  案件フォルダの 簡易提案書_<会社名>_<YYYYMMDD>.html を新しい順に。いちばん新しい版をボタン、前の版は小さく並べる（3つまで） */
+  function proposalButtons(c) {
+    var list = ((c.desk && c.desk.proposals) || []).slice(0, 3);
+    return list.map(function (p, i) {
+      var d = String(p.date || '').split('-');
+      var md = d.length === 3 ? Number(d[1]) + '/' + Number(d[2]) : '';
+      return el('button', { class: 'small' + (i === 0 ? ' primary' : ''), title: p.name,
+        text: i === 0 ? '簡易提案書を書き出す（' + md + '）' : '前の版（' + md + '）', onclick: function () { exportProposal(c, p); } });
+    });
+  }
+  function exportProposal(c, p) {
+    call('getProposal', { caseId: c.id, fileId: p.fileId }, '簡易提案書を書き出しています…', 'case-msg').then(function (r) {
+      if (!r) return;
+      var url = URL.createObjectURL(new Blob([r.html], { type: 'text/html' }));
+      var a = el('a', { href: url });
+      a.download = r.name || p.name;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+      msg('case-msg', '簡易提案書を書き出しました（' + a.download + '）。ブラウザで開いて見られます', 'ok');
+    });
   }
 
   /** パワポ（pptx）を書き出す。PptxGenJS は押したときだけ読み込む（ふだんの画面を重くしないため） */
