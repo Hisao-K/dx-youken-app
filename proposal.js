@@ -301,29 +301,17 @@
       sl.background = { color: WHITE };
       pages.push(sl);
       // 表紙には写真を入れない（2026-11-21 久夫さん指示「表紙の画像は不要」→「右半分が空白。バランスを考えて表紙として作り直して」）。
-      // 横幅いっぱいを使う：上＝ロゴ、御中・題・副題、目標の数字の札3枚を横に並べ、下の線の下に屋号と日付。写真は取り組みの②改善策のページだけで使う
-      var X0 = 0.8, CWD = W - X0 - 0.8;
+      // 横幅いっぱいを使う：上＝ロゴ、まん中＝御中・題・副題、下の線の下に屋号と日付。写真は取り組みの②改善策のページだけで使う
+      // 目標の数字の札は表紙に出さない（2026-11-21 久夫さん決定「数字の札なしがよい」。分析の「表紙の数字」の行は読むが使わない）
+      var X0 = 0.8, CWD = W - X0 - 0.8, dy = 0.8;
       sl.addShape(S.rect, { x: 0, y: 0, w: 0.18, h: H, fill: { color: ORANGE } });
       logo(sl, X0, 0.45, 3.0, 0.5, 20);
-      var nums = splitTop(M.cover.nums || '', ['／']).slice(0, 3);
-      var dy = nums.length ? 0 : 0.8;   // 数字の札がないときは、題のかたまりを下げて上下の空きをそろえる
       if (opts.company) T(sl, X0, 1.3 + dy, CWD, 0.45, opts.company + ' 御中', 18, { min: 12 });
       var title = M.cover.title || 'DX改善のご提案';
       var tl = splitTop(title, ['、']).map(function (x, i, a) { return x + (i < a.length - 1 ? '、' : ''); });
       T(sl, X0, 1.85 + dy, CWD, 1.6, tl, 36, { bold: true, min: 20, valign: 'middle' });
       sl.addShape(S.rect, { x: X0, y: 3.58 + dy, w: 0.9, h: 0.07, fill: { color: ORANGE } });
       T(sl, X0, 3.72 + dy, CWD, 0.5, M.cover.title ? 'DX改善のご提案' + (nIss ? '（' + nIss + 'つの課題の解決）' : '') : (nIss ? nIss + 'つの課題を解決する取り組み' : ''), 20, { bold: true, color: NAVY, min: 12 });
-      var GAP = 0.25, BW = (CWD - GAP * 2) / 3;
-      nums.forEach(function (nn, i) {
-        var p = nn.split(/[｜|]/), big = strip(p[0]), lab = strip(p[1] || '');
-        var lp = lab.match(/^([^（]*)(（.*）)?$/) || [lab, lab, ''];
-        var x = X0 + i * (BW + GAP);
-        box(sl, x, 4.5, BW, 1.5, LNAVY, null);
-        sl.addShape(S.rect, { x: x, y: 4.5, w: 0.08, h: 1.5, fill: { color: NAVY } });
-        T(sl, x + 0.15, 4.58, BW - 0.25, 0.6, big, 28, { bold: true, color: NAVYD, align: 'center', valign: 'middle', min: 14 });
-        T(sl, x + 0.15, 5.2, BW - 0.25, 0.72, [lp[1] || '', lp[2] || ''].filter(Boolean), 13, { align: 'center', valign: 'middle', min: 12 });
-      });
-      if (nums.length) T(sl, X0, 6.1, CWD, 0.32, '目標の数字は目安【仮定】。初回面談と最初の試行で確かめます', 12, { color: GREY });
       vline(sl, X0, 6.55, X0 + CWD, 6.55, LINE, 1);
       var d = new Date();
       T(sl, X0, 6.65, CWD - 3.0, 0.4, "Kamo's BASE　" + PRESENTER_SUB, 12, { color: GREY, valign: 'middle' });
