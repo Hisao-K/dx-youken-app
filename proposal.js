@@ -300,27 +300,34 @@
       var sl = pptx.addSlide();
       sl.background = { color: WHITE };
       pages.push(sl);
-      // 表紙には写真を入れない（2026-11-21 久夫さん指示）。右側は薄い紺の面だけ。写真は取り組みの②改善策のページだけで使う
-      sl.addShape(S.rect, { x: 6.55, y: 0, w: W - 6.55, h: H, fill: { color: LNAVY } });
+      // 表紙には写真を入れない（2026-11-21 久夫さん指示「表紙の画像は不要」→「右半分が空白。バランスを考えて表紙として作り直して」）。
+      // 横幅いっぱいを使う：上＝ロゴ、御中・題・副題、目標の数字の札3枚を横に並べ、下の線の下に屋号と日付。写真は取り組みの②改善策のページだけで使う
+      var X0 = 0.8, CWD = W - X0 - 0.8;
       sl.addShape(S.rect, { x: 0, y: 0, w: 0.18, h: H, fill: { color: ORANGE } });
-      logo(sl, 0.6, 0.5, 3.0, 0.5, 20);
-      if (opts.company) T(sl, 0.6, 1.55, 5.7, 0.45, opts.company + ' 御中', 16, { min: 11 });
+      logo(sl, X0, 0.45, 3.0, 0.5, 20);
+      var nums = splitTop(M.cover.nums || '', ['／']).slice(0, 3);
+      var dy = nums.length ? 0 : 0.8;   // 数字の札がないときは、題のかたまりを下げて上下の空きをそろえる
+      if (opts.company) T(sl, X0, 1.3 + dy, CWD, 0.45, opts.company + ' 御中', 18, { min: 12 });
       var title = M.cover.title || 'DX改善のご提案';
       var tl = splitTop(title, ['、']).map(function (x, i, a) { return x + (i < a.length - 1 ? '、' : ''); });
-      T(sl, 0.6, 2.1, 5.8, 1.9, tl, 30, { bold: true, min: 18, valign: 'middle' });
-      T(sl, 0.6, 4.05, 5.7, 0.45, M.cover.title ? 'DX改善のご提案' + (nIss ? '（' + nIss + 'つの課題の解決）' : '') : (nIss ? nIss + 'つの課題を解決する取り組み' : ''), 18, { bold: true, color: NAVY, min: 12 });
-      var nums = splitTop(M.cover.nums || '', ['／']).slice(0, 3);
+      T(sl, X0, 1.85 + dy, CWD, 1.6, tl, 36, { bold: true, min: 20, valign: 'middle' });
+      sl.addShape(S.rect, { x: X0, y: 3.58 + dy, w: 0.9, h: 0.07, fill: { color: ORANGE } });
+      T(sl, X0, 3.72 + dy, CWD, 0.5, M.cover.title ? 'DX改善のご提案' + (nIss ? '（' + nIss + 'つの課題の解決）' : '') : (nIss ? nIss + 'つの課題を解決する取り組み' : ''), 20, { bold: true, color: NAVY, min: 12 });
+      var GAP = 0.25, BW = (CWD - GAP * 2) / 3;
       nums.forEach(function (nn, i) {
         var p = nn.split(/[｜|]/), big = strip(p[0]), lab = strip(p[1] || '');
         var lp = lab.match(/^([^（]*)(（.*）)?$/) || [lab, lab, ''];
-        var x = 0.6 + i * 1.95;
-        box(sl, x, 4.6, 1.8, 1.25, LNAVY, null);
-        T(sl, x + 0.05, 4.63, 1.7, 0.45, big, 20, { bold: true, color: NAVYD, align: 'center', valign: 'middle', min: 12 });
-        T(sl, x + 0.03, 5.08, 1.74, 0.75, [lp[1] || '', lp[2] || ''].filter(Boolean), 12, { align: 'center', valign: 'middle' });
+        var x = X0 + i * (BW + GAP);
+        box(sl, x, 4.5, BW, 1.5, LNAVY, null);
+        sl.addShape(S.rect, { x: x, y: 4.5, w: 0.08, h: 1.5, fill: { color: NAVY } });
+        T(sl, x + 0.15, 4.58, BW - 0.25, 0.6, big, 28, { bold: true, color: NAVYD, align: 'center', valign: 'middle', min: 14 });
+        T(sl, x + 0.15, 5.2, BW - 0.25, 0.72, [lp[1] || '', lp[2] || ''].filter(Boolean), 13, { align: 'center', valign: 'middle', min: 12 });
       });
-      if (nums.length) T(sl, 0.6, 5.9, 5.8, 0.32, '目標の数字は目安【仮定】。初回面談と最初の試行で確かめます', 12, { color: GREY });
+      if (nums.length) T(sl, X0, 6.1, CWD, 0.32, '目標の数字は目安【仮定】。初回面談と最初の試行で確かめます', 12, { color: GREY });
+      vline(sl, X0, 6.55, X0 + CWD, 6.55, LINE, 1);
       var d = new Date();
-      T(sl, 0.6, 6.3, 5.8, 0.95, [d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日', "Kamo's BASE", PRESENTER_SUB], 12, { color: GREY });
+      T(sl, X0, 6.65, CWD - 3.0, 0.4, "Kamo's BASE　" + PRESENTER_SUB, 12, { color: GREY, valign: 'middle' });
+      T(sl, X0 + CWD - 3.0, 6.65, 3.0, 0.4, d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日', 12, { color: GREY, align: 'right', valign: 'middle' });
     })();
 
     // ---- 2 解決する課題（だれの課題かごと）
