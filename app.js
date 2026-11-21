@@ -1333,6 +1333,13 @@
             if (state.dirty) { alert('先に「保存」を押してください（パワポは保存した分析から作ります）'); return; }
             exportPptx(s.content);
           } }),
+          // 簡易提案書（6ページ）をデスクに頼む（2026-11-21 久夫さん指示）。デスクがスキル simple-proposal で作り、案件フォルダに置く
+          el('button', { class: 'small', text: '簡易提案書をデスクに頼む', onclick: function () {
+            if (state.dirty) { alert('先に「保存」を押してください（簡易提案書は保存した内容から作ります）'); return; }
+            if (!confirm('目的・課題・対策・分析から、6ページの簡易提案書（表紙・今の課題・対策の全体・対策の一覧と日程・計画・費用と効果）を作る依頼を、家のPCのデスクに置きます。\nできた資料は案件フォルダに入ります（アプリには取り込みません）。\n依頼を置きますか？')) return;
+            call('requestDesk', { caseId: c.id, step: 's5', mode: 'make', instruction: '', materialIds: [], proposal: true }, '依頼を置いています…', 'case-msg')
+              .then(function (r) { after(r, '簡易提案書の依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください。できた資料は案件フォルダに入ります'); });
+          } }),
         ]));
       }
       if (step === 's4') {
