@@ -1543,10 +1543,40 @@
       box.appendChild(el('section', { class: 'slide' }, [
         el('div', { class: 'slide-head' }, [el('span', { class: 'slide-title', text: title }), el('span', { class: 'slide-no', text: (i + 1) + ' / ' + chs.length })]),
         el('div', { class: 'slide-body' }, [view]),
-        el('div', { class: 'hosoku' }, [btn, area]),
+        el('div', { class: 'hosoku' }, (function () {
+          // 「コメントする」は「このスライドを手で直す」の右隣（2026-11-21 久夫さん指示）
+          var cm = slideComment(title);
+          return [el('div', { class: 'row' }, [btn, cm[0]])].concat(cm.slice(1), [area]);
+        })()),
       ]));
     });
     return box;
+  }
+
+  /**
+   * スライドの「コメントする」（2026-11-21 久夫さん指示）。このページへのコメントを足し、「Geminiで更新」「Claudeで更新・レビュー」で
+   * そのページと分析の全体を見直す。返り値は [ボタン, 入れる欄, このページのコメントの一覧]
+   */
+  function slideComment(title) {
+    var c = state.c, s = c && c.steps && c.steps.s5;
+    if (!s) return [];
+    var mine = (s.comments || []).filter(function (x) { return x.page === title && x.status !== 'dropped'; });
+    var ta = el('textarea', { class: 'comment-input', rows: '3', placeholder: 'このページへのコメント（例：費用の表に保守の月額も入れる。効果の時間は所長の分と事務の分に分ける）' });
+    var add = el('button', { class: 'small primary', text: 'コメントを足す', onclick: function () {
+      if (!ta.value.trim()) { ta.focus(); return; }
+      if (!commentNeedSaved()) return;
+      call('addComment', { caseId: c.id, step: 's5', text: ta.value, page: title }, '足しています…', 'case-msg').then(function (r) {
+        after(r, 'コメントを足しました。下の「Geminiで更新」か「Claudeで更新・レビュー」を押すと、コメントに従ってこのページと分析の全体を見直します');
+      });
+    } });
+    var form = el('div', { class: 'slide-comment', hidden: true }, [ta, el('div', { class: 'row' }, [add,
+      el('span', { class: 'sub', text: '足したコメントは、下の「Geminiで更新」「Claudeで更新・レビュー」で、このページと全体を見直すときに使います' })])]);
+    var open = el('button', { type: 'button', class: 'small hosoku-btn', text: 'コメントする', onclick: function () {
+      form.hidden = !form.hidden;
+      open.textContent = form.hidden ? 'コメントする' : 'コメントの欄を閉じる';
+      if (!form.hidden) ta.focus();
+    } });
+    return [open, form, mine.length ? el('ul', { class: 'comment-list' }, mine.map(function (x) { return commentRow(c, 's5', x); })) : null];
   }
 
   function chapterTitleOf(lines) {
@@ -2129,6 +2159,24 @@
    * 外していないコメントは、作る・作り直す・材料を反映した案・デスクへの依頼でも守らせる
    */
   var COMMENT_STATUS = { open: '未反映', applied: '反映済み', dropped: '外した（もう守らせない）' };
+  function commentNeedSaved() {
+    if (!state.dirty) return true;
+    alert('手で直した内容があります。先に下の「保存」を押してください（コメントの操作で画面を描き直すと、直した内容が消えるため）');
+    return false;
+  }
+  /** コメント1件の行（状態・日時・文・消す／外す） */
+  function commentRow(c, step, x) {
+    return el('li', { class: 'comment st-' + x.status }, [
+      el('span', { class: 'badge ' + (x.status === 'open' ? 'st-run' : x.status === 'applied' ? 'st-done' : 'st-wait'), text: (COMMENT_STATUS[x.status] || x.status) + (x.status === 'open' && x.deskAt ? '（デスクに依頼中）' : '') }),
+      el('span', { class: 'sub', text: ' ' + hm(x.time) + ' ' }),
+      el('span', { class: 'comment-text', text: x.text }),
+      x.status === 'dropped' ? null : el('button', { class: 'link small', text: x.status === 'open' ? '消す' : '外す', onclick: function () {
+        if (!commentNeedSaved()) return;
+        if (!confirm(x.status === 'open' ? 'このコメントを消しますか？' : 'このコメントを外しますか？（これからの作り直し・見直しで守らせなくなります。今の内容は変わりません）')) return;
+        call('removeComment', { caseId: c.id, step: step, commentId: x.id }, '外しています…', 'case-msg').then(function (r) { after(r, x.status === 'open' ? 'コメントを消しました' : 'コメントを外しました'); });
+      } }),
+    ]);
+  }
   function commentPanel(step) {
     var c = state.c, s = c.steps[step];
     var list = s.comments || [];
@@ -2138,23 +2186,8 @@
     var ta = el('textarea', { class: 'comment-input', rows: '3', placeholder: step === 's3'
       ? '例：課題2と課題3の順番を入れ替える。紙のカルテの課題は、2つのジムの間の持ち運びに絞る'
       : '例：課題1の本命は、今使っている道具の使い方の見直しにする。費用は月1万円までで考える' });
-    function needSaved() {
-      if (!state.dirty) return true;
-      alert('手で直した内容があります。先に下の「保存」を押してください（コメントの操作で画面を描き直すと、直した内容が消えるため）');
-      return false;
-    }
-    function row(x) {
-      return el('li', { class: 'comment st-' + x.status }, [
-        el('span', { class: 'badge ' + (x.status === 'open' ? 'st-run' : x.status === 'applied' ? 'st-done' : 'st-wait'), text: (COMMENT_STATUS[x.status] || x.status) + (x.status === 'open' && x.deskAt ? '（デスクに依頼中）' : '') }),
-        el('span', { class: 'sub', text: ' ' + hm(x.time) + ' ' }),
-        el('span', { class: 'comment-text', text: x.text }),
-        x.status === 'dropped' ? null : el('button', { class: 'link small', text: x.status === 'open' ? '消す' : '外す', onclick: function () {
-          if (!needSaved()) return;
-          if (!confirm(x.status === 'open' ? 'このコメントを消しますか？' : 'このコメントを外しますか？（これからの作り直し・見直しで守らせなくなります。今の内容は変わりません）')) return;
-          call('removeComment', { caseId: c.id, step: step, commentId: x.id }, '外しています…', 'case-msg').then(function (r) { after(r, x.status === 'open' ? 'コメントを消しました' : 'コメントを外しました'); });
-        } }),
-      ]);
-    }
+    var needSaved = commentNeedSaved;
+    function row(x) { return commentRow(c, step, x); }
     var box = el('details', { class: 'panel comments' }, [
       el('summary', { text: '久夫さんのコメント（' + what + 'の見直し）' + (open.length ? '：未反映 ' + open.length + '件' : list.length ? '：' + list.length + '件' : '') }),
       el('p', { class: 'sub', text: 'コメントを足して、見直す人を選んで押します。' +
@@ -2219,7 +2252,7 @@
       return el('div', { class: 'panel proposal' }, [
         el('h3', { text: names + 'した案を作れませんでした' }),
         el('div', { class: 'errbox', text: p.error || '' }),
-        el('p', { class: 'sub', text: p.remake ? '今の内容はそのままです。案を消してから、もう一度「Gemini で作り直す」を押してください。'
+        el('p', { class: 'sub', text: p.remake ? '今の内容はそのままです。案を消してから、もう一度「Geminiで更新」を押してください。'
           : p.comment ? '今の内容はそのままです。案を消してから、もう一度「コメントで見直す」を押してください（コメントは未反映のまま残っています）。'
           : '今の内容はそのままです。案を消してから、材料を入れ直してください。' }),
         el('div', { class: 'row' }, [discard]),
@@ -2240,8 +2273,8 @@
         : p.comment
         ? '今の内容から、次のように変わります。コメントのとおりに直っているか確かめ、よければ「反映する」を押してください（反映すると、使ったコメントは「反映済み」になります）。押すまで、今の内容は変わりません。'
         : '今の内容から、次のように変わります。打ち合わせで前提が変わっていないか確かめ、よければ「反映する」を押してください。押すまで、今の内容は変わりません。' }),
-      p.comment ? el('ul', { class: 'comment-list' }, (s.comments || []).filter(function (x) { return (p.commentIds || []).indexOf(x.id) >= 0; })
-        .map(function (x) { return el('li', { text: '使ったコメント：' + x.text }); })) : null,
+      (p.commentIds || []).length ? el('ul', { class: 'comment-list' }, (s.comments || []).filter(function (x) { return (p.commentIds || []).indexOf(x.id) >= 0; })
+        .map(function (x) { return el('li', { text: '使ったコメント：' + (x.page ? '（' + x.page + '）' : '') + x.text }); })) : null,
       changed ? el('div', { class: 'warn', text: 'この案を作った後に、手で直した内容があります。反映すると、その直しは消えます。' }) : null,
       el('h4', { text: STEP_TAB[step].replace('・ヒアリング', '') + 'の文章' }),
       diff,
@@ -2520,8 +2553,12 @@
             .then(function (r) { after(r, '受け付けました。Gemini が作っています（30秒〜1分ほど。裏で進みます）'); });
         } }),
         // 中身がある段を、今の材料をすべて使って今の型で作り直す（2026-11-05 久夫さん指示）。案は違いを見て「反映する」を押したときだけ入る
-        s.content ? el('button', { class: 'small', text: 'Gemini で作り直す', disabled: !!s.running || !!(s.proposal && s.proposal.status === 'making'), onclick: function () {
+        // 2026-11-21 久夫さん指示：ボタン名を「Gemini で作り直す」→「Geminiで更新」、「デスクにレビューを頼む」→「Claudeで更新・レビュー」（全タブ）。
+        // 未反映の久夫さんのコメント（分析はスライドの「コメントする」）は、この更新で今回の見直しとして使い、反映すると「反映済み」になる
+        s.content ? el('button', { class: 'small', text: 'Geminiで更新', disabled: !!s.running || !!(s.proposal && s.proposal.status === 'making'), onclick: function () {
+          var openN = (s.comments || []).filter(function (x) { return x.status === 'open'; }).length;
           var msgText = '入れた材料（文字になったもの）をすべて使って、今の型で作り直した案を作ります（1〜2分）。\n' +
+            (openN ? '未反映のコメント' + openN + '件にも従って、全体を見直します。\n' : '') +
             '案ができたら、今の内容との違いを見て「反映する」を押したときだけ入ります。手で直した所も、案では変わることがあります。' +
             (s.proposal ? '\n反映していない今の案は、この案に置き換わります。' : '') + '\n作り直しますか？';
           if (!confirm(msgText)) return;
@@ -2531,10 +2568,11 @@
               .then(function (r) { after(r, '受け付けました。作り直した案を作っています（1〜2分。裏で進みます）。できると、この画面の上に今の内容との違いが出ます'); });
           });
         } }) : null,
-        el('button', { class: 'small', text: s.content ? 'デスクにレビューを頼む' : 'デスクに頼む', onclick: function () {
+        el('button', { class: 'small', text: s.content ? 'Claudeで更新・レビュー' : 'デスクに頼む', onclick: function () {
           saveFirst().then(function (okSaved) {
             if (!okSaved) return;
-            var p = s.content ? { mode: 'revise', instruction: 'レビューして、採用した指摘で直す' } : { mode: 'make', instruction: '' };
+            var openN = (s.comments || []).filter(function (x) { return x.status === 'open'; }).length;
+            var p = s.content ? { mode: 'revise', instruction: 'レビューして、採用した指摘で直す' + (openN ? '。依頼の comments の「未反映」のコメントにも従って直し（ページの名指しがあれば、そのページを直したうえで全体を見直す）、「反映済み」のコメントは崩さない' : '') } : { mode: 'make', instruction: '' };
             call('requestDesk', { caseId: c.id, step: step, mode: p.mode, instruction: p.instruction, materialIds: [] }, '依頼を置いています…', 'case-msg')
               .then(function (r) { after(r, 'デスクへの依頼を置きました。家のPCの Claude Code で「依頼を片づけて」と頼んでください'); });
           });
