@@ -300,11 +300,8 @@
       var sl = pptx.addSlide();
       sl.background = { color: WHITE };
       pages.push(sl);
-      var img = images[1] || images[0];
-      if (img) {
-        sl.addImage({ data: img, x: 6.55, y: 0, w: W - 6.55, h: H, sizing: { type: 'cover', w: W - 6.55, h: H } });
-        T(sl, W - 3.0, H - 0.45, 2.85, 0.32, 'イメージ（AI で作成した写真）', 12, { color: WHITE, fill: NAVY, shape: S.rect, align: 'center', valign: 'middle', margin: 0, nofit: true });
-      } else sl.addShape(S.rect, { x: 6.55, y: 0, w: W - 6.55, h: H, fill: { color: LNAVY } });
+      // 表紙には写真を入れない（2026-11-21 久夫さん指示）。右側は薄い紺の面だけ。写真は取り組みの②改善策のページだけで使う
+      sl.addShape(S.rect, { x: 6.55, y: 0, w: W - 6.55, h: H, fill: { color: LNAVY } });
       sl.addShape(S.rect, { x: 0, y: 0, w: 0.18, h: H, fill: { color: ORANGE } });
       logo(sl, 0.6, 0.5, 3.0, 0.5, 20);
       if (opts.company) T(sl, 0.6, 1.55, 5.7, 0.45, opts.company + ' 御中', 16, { min: 11 });
